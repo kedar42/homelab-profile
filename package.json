@@ -47,6 +47,7 @@
     "@vitejs/plugin-react": "6.1.1",
     "concurrently": "10.0.5",
     "drizzle-kit": "0.31.10",
+    "pg": "8.23.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.2.2"

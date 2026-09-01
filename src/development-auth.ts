@@ -6,6 +6,9 @@ export interface DevelopmentIdentity {
   pictureUrl: string | null;
 }
 
+const COOKIE_SECRET_PLACEHOLDER = "replace-me";
+const LOCAL_COOKIE_SECRET = "local-development-cookie-secret-never-used-in-production";
+
 function valueOrDefault(
   env: Record<string, string | undefined>,
   key: string,
@@ -52,4 +55,17 @@ export function assertDevelopmentAuthDisabled(
       "DEV_AUTH_ENABLED is development-only. Disable it before starting the production server.",
     );
   }
+}
+
+export function withDevelopmentAuthDefaults(
+  env: Record<string, string | undefined>,
+  identity: DevelopmentIdentity | null,
+): Record<string, string | undefined> {
+  const cookieSecret = env.COOKIE_SECRET?.trim();
+  if (!identity || (cookieSecret && cookieSecret !== COOKIE_SECRET_PLACEHOLDER)) return env;
+
+  return {
+    ...env,
+    COOKIE_SECRET: LOCAL_COOKIE_SECRET,
+  };
 }

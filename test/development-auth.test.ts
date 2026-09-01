@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { assertDevelopmentAuthDisabled, loadDevelopmentIdentity } from "../src/development-auth";
+import {
+  assertDevelopmentAuthDisabled,
+  loadDevelopmentIdentity,
+  withDevelopmentAuthDefaults,
+} from "../src/development-auth";
 
 describe("development authentication configuration", () => {
   test("is disabled by default and supplies explicit local defaults when enabled", () => {
@@ -46,5 +50,22 @@ describe("development authentication configuration", () => {
     expect(() => assertDevelopmentAuthDisabled({ DEV_AUTH_ENABLED: "true" })).toThrow(
       "DEV_AUTH_ENABLED is development-only",
     );
+  });
+
+  test("substitutes the cookie placeholder only for local authentication", () => {
+    const identity = loadDevelopmentIdentity({ DEV_AUTH_ENABLED: "true" });
+    const localEnvironment = withDevelopmentAuthDefaults({ COOKIE_SECRET: "replace-me" }, identity);
+
+    expect(localEnvironment.COOKIE_SECRET).not.toBe("replace-me");
+    expect(localEnvironment.COOKIE_SECRET?.length).toBeGreaterThanOrEqual(32);
+    expect(withDevelopmentAuthDefaults({ COOKIE_SECRET: "replace-me" }, null).COOKIE_SECRET).toBe(
+      "replace-me",
+    );
+    expect(
+      withDevelopmentAuthDefaults(
+        { COOKIE_SECRET: "an-explicit-cookie-secret-with-more-than-32-characters" },
+        identity,
+      ).COOKIE_SECRET,
+    ).toBe("an-explicit-cookie-secret-with-more-than-32-characters");
   });
 });

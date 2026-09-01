@@ -118,14 +118,14 @@ Expired records are rejected during reads and pruned when a new login begins. Th
 
 - Bun `1.3.14` or later in the Bun 1.x line
 - PostgreSQL
-- An Authentik application with an OAuth2/OIDC provider
+- An Authentik OAuth2/OIDC application only when testing real OIDC mode
 
 Install exactly what is recorded in the lockfile:
 
 ```sh
 bun ci
 cp .env.example .env
-# Configure PostgreSQL and replace COOKIE_SECRET before continuing.
+# Configure PostgreSQL. Local auth accepts the COOKIE_SECRET placeholder.
 bun run db:migrate
 bun run dev
 ```
@@ -160,6 +160,8 @@ DEV_AUTH_EMAIL=developer@localhost
 
 Start the normal development servers and select **Use local developer**. No Authentik discovery, redirect, token exchange, or mock identity-provider deployment occurs. PostgreSQL is still required intentionally: local auth replaces only the external identity provider, so sessions, CSRF, avatar metadata, migrations, and storage remain representative.
 
+When local authentication is enabled, `src/dev.ts` replaces an absent or unchanged `COOKIE_SECRET=replace-me` value with a built-in development-only secret. An explicitly configured secret is always preserved. Real OIDC mode and production still reject the placeholder.
+
 The bypass is wired only by `src/dev.ts`. `bun run start` calls a fail-closed guard and exits if `DEV_AUTH_ENABLED=true`. Set it to `false` to exercise the real Authentik flow during development.
 
 ### Configuration
@@ -180,7 +182,7 @@ The bypass is wired only by `src/dev.ts`. `bun run start` calls a fail-closed gu
 | `OIDC_ISSUER` | Authentik per-provider issuer, including trailing slash | required |
 | `OIDC_CLIENT_ID` | Authentik client ID | required |
 | `OIDC_CLIENT_SECRET` | Authentik client secret | required |
-| `COOKIE_SECRET` | High-entropy secret of at least 32 characters | required |
+| `COOKIE_SECRET` | High-entropy secret; the placeholder is substituted only in local-auth development | required for OIDC/production |
 | `SESSION_TTL_DAYS` | Local session lifetime | `7` |
 
 The OIDC configuration assumes Authentik's recommended per-provider issuer mode (`https://auth.example.com/application/o/<slug>/`). Authentik's global issuer mode needs separate issuer and discovery URLs and is not supported by this single `OIDC_ISSUER` setting.
