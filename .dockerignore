@@ -1,0 +1,7 @@
+node_modules
+client/dist
+.git
+.env
+data
+coverage
+*.log
