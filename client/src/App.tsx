@@ -183,7 +183,6 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
     .slice(0, 2)
     .toUpperCase();
   const currentImage = previewUrl || profile.avatarUrl || undefined;
-  const maxSize = Math.floor(profile.maxUploadBytes / 1024 / 1024);
 
   return (
     <main className="app-page">
@@ -199,12 +198,20 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
           {notice && <StatusAlert kind={notice.kind} message={notice.message} />}
           <Card className="profile-card" variant="secondary">
             <Card.Content className="profile-card-content">
-              <div className="profile-summary">
-                <button
-                  type="button"
+              <input
+                ref={inputRef}
+                className="sr-only"
+                type="file"
+                accept={profile.acceptedImageTypes.join(",")}
+                onChange={onFileChange}
+              />
+              <div className={`profile-summary ${file ? "has-pending-avatar" : ""}`}>
+                <Button
                   className="avatar-button"
+                  variant="ghost"
+                  isIconOnly
                   aria-label="Choose a new profile picture"
-                  onClick={() => inputRef.current?.click()}
+                  onPress={() => inputRef.current?.click()}
                 >
                   <Avatar className="profile-avatar" color="accent" variant="soft">
                     {currentImage && (
@@ -218,40 +225,20 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
                   <span className="edit-badge" aria-hidden="true">
                     <Pencil />
                   </span>
-                </button>
+                </Button>
                 <div className="summary-copy">
                   <h1 id="profile-title">{profile.user.displayName}</h1>
                   <p>{profile.user.email}</p>
                 </div>
               </div>
-
-              <div className="photo-setting">
-                <input
-                  ref={inputRef}
-                  className="sr-only"
-                  type="file"
-                  accept={profile.acceptedImageTypes.join(",")}
-                  onChange={onFileChange}
-                />
-                <div className="photo-copy">
-                  <div>
-                    <b>Profile picture</b>
-                    <span>{file?.name || `JPEG, PNG, WebP or AVIF · up to ${maxSize} MB`}</span>
-                  </div>
-                  <Button
-                    className="choose-button"
-                    variant="secondary"
-                    onPress={() => inputRef.current?.click()}
-                  >
-                    Choose image
-                  </Button>
-                </div>
-                {file && (
+              {file && (
+                <div className="save-row">
+                  <span title={file.name}>{file.name}</span>
                   <Button className="save-button" isPending={isSaving} onPress={saveAvatar}>
                     {isSaving ? "Saving" : "Save changes"}
                   </Button>
-                )}
-              </div>
+                </div>
+              )}
             </Card.Content>
           </Card>
         </section>

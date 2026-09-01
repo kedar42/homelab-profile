@@ -10,12 +10,12 @@
   color-scheme: dark;
   --page: #090c0b;
   --surface: #101512;
-  --surface-hover: #171e19;
+  --surface-hover: #1d1720;
   --ink: #edf4ef;
   --muted: #8b9890;
   --line: #273029;
-  --accent: #9fe870;
-  --accent-ink: #071006;
+  --accent: #b47ad1;
+  --accent-ink: #160b1b;
   color: var(--ink);
   background: var(--page);
   font-family: var(--font-sans);
@@ -39,7 +39,7 @@ body::before {
   inset: 0;
   z-index: -1;
   content: "";
-  background: radial-gradient(circle at 50% 0%, rgb(88 130 92 / 11%), transparent 42%);
+  background: radial-gradient(circle at 50% 0%, rgb(112 41 99 / 18%), transparent 42%);
   pointer-events: none;
 }
 
@@ -196,7 +196,7 @@ input {
   border: 1px solid var(--line);
   border-radius: 50%;
   color: var(--accent);
-  background: #172019;
+  background: #241727;
 }
 
 .login-avatar svg {
@@ -233,7 +233,7 @@ input {
 
 .login-button:hover,
 .save-button:hover {
-  background: #b4f08f;
+  background: #c691df;
 }
 
 .status-alert {
@@ -252,7 +252,10 @@ input {
   align-items: center;
   gap: 24px;
   min-width: 0;
-  padding-bottom: 32px;
+}
+
+.profile-summary.has-pending-avatar {
+  padding-bottom: 28px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -280,7 +283,7 @@ input {
   border: 1px solid var(--line);
   border-radius: 50%;
   color: var(--accent);
-  background: #1a241c;
+  background: #27192b;
   font-family: var(--font-mono);
   font-size: 28px;
 }
@@ -333,50 +336,26 @@ input {
   white-space: nowrap;
 }
 
-.photo-setting {
-  padding-top: 28px;
-}
-
-.photo-copy {
+.save-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
+  padding-top: 22px;
 }
 
-.photo-copy > div {
+.save-row span {
   min-width: 0;
-}
-
-.photo-copy b,
-.photo-copy span {
-  display: block;
   overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.photo-copy b {
-  margin-bottom: 5px;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.photo-copy span {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.choose-button {
-  flex: none;
-  border: 1px solid var(--line);
-  color: var(--ink);
-  background: var(--surface-hover);
-}
-
 .save-button {
+  flex: none;
   min-width: 140px;
-  margin-top: 22px;
 }
 
 @media (max-width: 560px) {
@@ -418,13 +397,12 @@ input {
     font-size: 20px;
   }
 
-  .photo-copy {
+  .save-row {
     align-items: stretch;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
   }
 
-  .choose-button,
   .save-button {
     width: 100%;
   }
