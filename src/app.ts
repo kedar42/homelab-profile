@@ -9,11 +9,13 @@ import * as oidc from "openid-client";
 import { ACCEPTED_IMAGE_TYPES, AvatarUploadError, processAvatarUpload } from "./avatar";
 import type { AppConfig } from "./config";
 import type { ProfileRepository } from "./db/repository";
+import type { DevelopmentIdentity } from "./development-auth";
 import { csrfToken, hashToken, randomToken, validCsrfToken } from "./security";
 
 export interface AppDependencies {
   config: AppConfig;
   repository: ProfileRepository;
+  developmentIdentity?: DevelopmentIdentity | null;
 }
 
 function cookieSettings(config: AppConfig) {
@@ -55,7 +57,8 @@ const profileModel = t.Object({
   acceptedImageTypes: t.Array(t.String()),
 });
 
-export function createApp({ config, repository }: AppDependencies) {
+export function createApp({ config, repository, developmentIdentity }: AppDependencies) {
+  const authenticationMode: "development" | "oidc" = developmentIdentity ? "development" : "oidc";
   let oidcConfiguration: Promise<oidc.Configuration> | undefined;
   const getOidcConfiguration = () => {
     oidcConfiguration ??= oidc.discovery(
@@ -146,7 +149,28 @@ export function createApp({ config, repository }: AppDependencies) {
     )
     .get(
       "/login",
-      async ({ cookie: { profile_oidc }, status }) => {
+      async ({ cookie: { profile_oidc, profile_session }, status }) => {
+        if (developmentIdentity) {
+          try {
+            const sessionId = randomToken();
+            await repository.deleteExpired();
+            await repository.createSession({
+              idHash: await hashToken(sessionId),
+              ...developmentIdentity,
+              expiresAt: new Date(Date.now() + config.sessionTtlDays * 24 * 60 * 60_000),
+            });
+            profile_session.value = sessionId;
+            profile_session.set({
+              ...cookieSettings(config),
+              maxAge: config.sessionTtlDays * 24 * 60 * 60,
+            });
+            return Response.redirect(new URL("/", config.appUrl).href, 303);
+          } catch (error) {
+            console.error("Unable to start development session", error);
+            return status(500, { error: "The local development session could not be created." });
+          }
+        }
+
         try {
           const configuration = await getOidcConfiguration();
           const transactionId = randomToken();
@@ -258,6 +282,12 @@ export function createApp({ config, repository }: AppDependencies) {
     )
     .group("/api", (api) =>
       api
+        .get("/auth/mode", () => ({ mode: authenticationMode }), {
+          response: {
+            200: t.Object({ mode: t.Union([t.Literal("oidc"), t.Literal("development")]) }),
+          },
+          detail: { tags: ["Authentication"], summary: "Get the active sign-in mode" },
+        })
         .get(
           "/me",
           async ({ cookie: { profile_session }, status }) => {

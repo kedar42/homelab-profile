@@ -14,11 +14,14 @@ import { type ChangeEvent, type DragEvent, useCallback, useEffect, useRef, useSt
 import { api } from "./api";
 
 type ProfileResponse = NonNullable<Awaited<ReturnType<typeof api.api.me.get>>["data"]>;
+type AuthenticationMode = NonNullable<
+  Awaited<ReturnType<typeof api.api.auth.mode.get>>["data"]
+>["mode"];
 
 type LoadState =
   | { kind: "loading" }
-  | { kind: "anonymous" }
-  | { kind: "ready"; profile: ProfileResponse }
+  | { kind: "anonymous"; authenticationMode: AuthenticationMode }
+  | { kind: "ready"; profile: ProfileResponse; authenticationMode: AuthenticationMode }
   | { kind: "error"; message: string };
 
 function edenErrorMessage(error: { value: unknown } | null): string {
@@ -51,34 +54,43 @@ function LoadingScreen() {
   );
 }
 
-function LoginScreen() {
+function LoginScreen({ authenticationMode }: { authenticationMode: AuthenticationMode }) {
+  const isDevelopment = authenticationMode === "development";
   return (
     <main className="login-page">
       <header className="login-header">
         <Brand />
-        <Chip color="success" variant="soft" size="sm">
-          Homelab service
+        <Chip color={isDevelopment ? "warning" : "success"} variant="soft" size="sm">
+          {isDevelopment ? "Local development" : "Homelab service"}
         </Chip>
       </header>
       <section className="login-grid">
         <div className="login-copy">
-          <p className="eyebrow">Your identity, in one place</p>
+          <p className="eyebrow">
+            {isDevelopment ? "Lightweight development identity" : "Your identity, in one place"}
+          </p>
           <h1>
             Put a face to <span>your account.</span>
           </h1>
           <p className="intro">
-            View the details connected to your homelab account and choose the picture that
-            represents you across our services.
+            {isDevelopment
+              ? "Use the identity configured in your local environment. No Authentik deployment is contacted in this mode."
+              : "View the details connected to your homelab account and choose the picture that represents you across our services."}
           </p>
           <Button
             className="login-button"
             size="lg"
             onPress={() => window.location.assign("/login")}
           >
-            Continue with SSO <ArrowRight />
+            {isDevelopment ? "Use local developer" : "Continue with SSO"} <ArrowRight />
           </Button>
           <div className="login-assurance">
-            <ShieldCheck /> <span>You’ll continue securely through Authentik.</span>
+            {isDevelopment ? <CircleInfo /> : <ShieldCheck />}
+            <span>
+              {isDevelopment
+                ? "Development only—production refuses this mode."
+                : "You’ll continue securely through Authentik."}
+            </span>
           </div>
         </div>
         <div className="identity-art" aria-hidden="true">
@@ -123,7 +135,13 @@ function StatusAlert({ kind, message }: { kind: "success" | "danger"; message: s
   );
 }
 
-function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) {
+function ProfileScreen({
+  initialProfile,
+  authenticationMode,
+}: {
+  initialProfile: ProfileResponse;
+  authenticationMode: AuthenticationMode;
+}) {
   const [profile, setProfile] = useState(initialProfile);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -230,6 +248,11 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
       <header className="app-header">
         <Brand />
         <div className="header-user">
+          {authenticationMode === "development" && (
+            <Chip color="warning" variant="soft" size="sm">
+              Local identity
+            </Chip>
+          )}
           <Chip variant="soft" size="sm">
             {profile.user.displayName}
           </Chip>
@@ -355,14 +378,22 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
           </Card>
           <div className="read-only-note">
             <CircleInfo />
-            <span>Account details come from Authentik and can’t be edited here.</span>
+            <span>
+              {authenticationMode === "development"
+                ? "Account details come from the local development environment."
+                : "Account details come from Authentik and can’t be edited here."}
+            </span>
           </div>
         </section>
       </div>
 
       <footer className="app-footer">
         <span>Profile service</span>
-        <span>Identity managed by Authentik</span>
+        <span>
+          {authenticationMode === "development"
+            ? "Local development identity"
+            : "Identity managed by Authentik"}
+        </span>
       </footer>
     </main>
   );
@@ -384,12 +415,15 @@ export function App() {
 
   useEffect(() => {
     let active = true;
-    api.api.me
-      .get()
-      .then(({ data, error }) => {
-        if (error?.status === 401) return { kind: "anonymous" } as const;
-        if (error) throw new Error(edenErrorMessage(error));
-        return { kind: "ready", profile: data } as const;
+    Promise.all([api.api.auth.mode.get(), api.api.me.get()])
+      .then(([modeResult, profileResult]) => {
+        if (modeResult.error) throw new Error(edenErrorMessage(modeResult.error));
+        const authenticationMode = modeResult.data.mode;
+        if (profileResult.error?.status === 401) {
+          return { kind: "anonymous", authenticationMode } as const;
+        }
+        if (profileResult.error) throw new Error(edenErrorMessage(profileResult.error));
+        return { kind: "ready", profile: profileResult.data, authenticationMode } as const;
       })
       .then((next) => {
         if (active) setState(next);
@@ -407,8 +441,14 @@ export function App() {
   }, []);
 
   if (state.kind === "loading") return <LoadingScreen />;
-  if (state.kind === "anonymous") return <LoginScreen />;
-  if (state.kind === "ready") return <ProfileScreen initialProfile={state.profile} />;
+  if (state.kind === "anonymous") {
+    return <LoginScreen authenticationMode={state.authenticationMode} />;
+  }
+  if (state.kind === "ready") {
+    return (
+      <ProfileScreen initialProfile={state.profile} authenticationMode={state.authenticationMode} />
+    );
+  }
   return (
     <main className="center-screen error-state">
       <CircleInfo />

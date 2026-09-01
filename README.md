@@ -1,6 +1,6 @@
 # Homelab Profile
 
-Homelab Profile is a self-service account page for a homelab. Users sign in with Authentik, inspect the identity claims exposed to the application, and upload one normalized profile picture at a stable public endpoint.
+Homelab Profile is a self-service account page for a homelab. Users sign in with Authentik, inspect the identity claims exposed to the application, and upload one normalized profile picture at a stable public endpoint. A lightweight development identity exercises the same local session and profile flow without contacting Authentik.
 
 The repository is a verified `0.1.0` bootstrap: dependencies are exactly pinned in `bun.lock`, the database has a reviewed initial migration, formatting and linting are enforced with Biome, and CI runs type checks, tests, a production build, and Drizzle migration checks. Live Authentik and PostgreSQL integration still requires those external services.
 
@@ -14,6 +14,7 @@ flowchart LR
     Vite[Vite development server\n:5173]
     API[Elysia API on Bun\n:3000]
     Auth[Authentik OIDC provider]
+    DevIdentity[Local development identity]
     DB[(PostgreSQL)]
     Files[(Persistent avatar storage)]
 
@@ -21,6 +22,7 @@ flowchart LR
     Browser -. development assets .-> Vite
     Vite -->|/api /auth /avatars proxy| API
     API <-->|OIDC code flow + PKCE| Auth
+    DevIdentity -. development entry only .-> API
     API <-->|Drizzle ORM + Bun SQL| DB
     API -->|Sharp-normalized WebP| Files
     API -->|production assets| Browser
@@ -54,6 +56,8 @@ The dependency set was reviewed against current upstream documentation on 2026-0
 4. Authentik returns the authorization response to `GET /auth/callback`.
 5. The callback atomically consumes the transaction, verifies the response, creates a hashed local session, and sets an HttpOnly cookie.
 6. The browser is redirected only to `/`; arbitrary return URLs are not accepted.
+
+In lightweight development mode, `GET /login` skips only the OIDC exchange. It creates the same hashed PostgreSQL session from the explicitly configured local identity, after which profile reads, CSRF protection, uploads, storage, and logout use the production code paths.
 
 ### Avatar upload
 
@@ -121,7 +125,7 @@ Install exactly what is recorded in the lockfile:
 ```sh
 bun ci
 cp .env.example .env
-# Replace every placeholder in .env before continuing.
+# Configure PostgreSQL and replace COOKIE_SECRET before continuing.
 bun run db:migrate
 bun run dev
 ```
@@ -142,6 +146,22 @@ http://localhost:5173/auth/callback
 
 Vite proxies that callback to Elysia. In production, `APP_URL` must be the public HTTPS origin and the Authentik redirect URI must be `<APP_URL>/auth/callback`.
 
+### Lightweight development authentication
+
+The example environment enables local authentication by default:
+
+```dotenv
+DEV_AUTH_ENABLED=true
+DEV_AUTH_SUBJECT=local-developer
+DEV_AUTH_USERNAME=developer
+DEV_AUTH_DISPLAY_NAME=Local Developer
+DEV_AUTH_EMAIL=developer@localhost
+```
+
+Start the normal development servers and select **Use local developer**. No Authentik discovery, redirect, token exchange, or mock identity-provider deployment occurs. PostgreSQL is still required intentionally: local auth replaces only the external identity provider, so sessions, CSRF, avatar metadata, migrations, and storage remain representative.
+
+The bypass is wired only by `src/dev.ts`. `bun run start` calls a fail-closed guard and exits if `DEV_AUTH_ENABLED=true`. Set it to `false` to exercise the real Authentik flow during development.
+
 ### Configuration
 
 | Variable | Meaning | Example/default |
@@ -151,6 +171,12 @@ Vite proxies that callback to Elysia. In production, `APP_URL` must be the publi
 | `DATABASE_URL` | PostgreSQL connection URL | `postgresql://profile:profile@localhost:5432/profile` |
 | `AVATAR_DIR` | Persistent avatar directory | `./data/avatars` |
 | `MAX_UPLOAD_BYTES` | Maximum source upload size | `5242880` |
+| `DEV_AUTH_ENABLED` | Use a local identity through the development entry only | `true` in `.env.example` |
+| `DEV_AUTH_SUBJECT` | Stable local OIDC-like subject | `local-developer` |
+| `DEV_AUTH_USERNAME` | Local username | `developer` |
+| `DEV_AUTH_DISPLAY_NAME` | Local display name | `Local Developer` |
+| `DEV_AUTH_EMAIL` | Local email claim | `developer@localhost` |
+| `DEV_AUTH_PICTURE_URL` | Optional HTTP(S) fallback picture | unset |
 | `OIDC_ISSUER` | Authentik per-provider issuer, including trailing slash | required |
 | `OIDC_CLIENT_ID` | Authentik client ID | required |
 | `OIDC_CLIENT_SECRET` | Authentik client secret | required |
@@ -195,6 +221,7 @@ Run the migration as an explicit release step before starting the new applicatio
 ## Security baseline
 
 - OIDC authorization-code flow with PKCE, state, nonce, and one-time transactions.
+- Development authentication is injected only by the development process entry; production fails closed when its flag is enabled.
 - Random session and transaction tokens; only SHA-256 hashes are stored.
 - HttpOnly, SameSite=Lax cookies; `Secure` over HTTPS.
 - Session-bound HMAC CSRF tokens for avatar mutation.

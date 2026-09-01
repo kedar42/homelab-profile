@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { createApp } from "../src/app";
 import type { AppConfig } from "../src/config";
 import type { ProfileRepository } from "../src/db/repository";
+import type { SessionRecord } from "../src/db/schema";
 import { csrfToken, hashToken } from "../src/security";
 
 const config: AppConfig = {
@@ -84,6 +85,64 @@ describe("profile API", () => {
     expect(document.status).toBe(200);
     expect(document.headers.get("content-type")).toContain("application/json");
     expect(ui.status).toBe(404);
+  });
+
+  test("reports OIDC mode by default", async () => {
+    const response = await createApp({ config, repository: repository() }).handle(
+      new Request("https://profile.example.com/api/auth/mode"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ mode: "oidc" });
+  });
+
+  test("creates a normal local session without contacting OIDC in development mode", async () => {
+    let createdSession: SessionRecord | undefined;
+    const response = await createApp({
+      config,
+      developmentIdentity: {
+        subject: "local-subject",
+        username: "developer",
+        displayName: "Local Developer",
+        email: "developer@localhost",
+        pictureUrl: null,
+      },
+      repository: repository({
+        async createSession(record) {
+          createdSession = record;
+        },
+      }),
+    }).handle(new Request("https://profile.example.com/login"));
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("https://profile.example.com/");
+    expect(response.headers.get("set-cookie")).toContain("profile_session=");
+    expect(response.headers.get("set-cookie")).not.toContain("profile_oidc=");
+    expect(createdSession).toMatchObject({
+      subject: "local-subject",
+      username: "developer",
+      displayName: "Local Developer",
+      email: "developer@localhost",
+      pictureUrl: null,
+    });
+    expect(createdSession?.idHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  test("reports development mode when a local identity is injected", async () => {
+    const response = await createApp({
+      config,
+      repository: repository(),
+      developmentIdentity: {
+        subject: "local-subject",
+        username: "developer",
+        displayName: "Local Developer",
+        email: "developer@localhost",
+        pictureUrl: null,
+      },
+    }).handle(new Request("https://profile.example.com/api/auth/mode"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ mode: "development" });
   });
 
   test("requires a session for the profile endpoint", async () => {

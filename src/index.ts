@@ -1,7 +1,9 @@
 import { addWebClient, createApp } from "./app";
 import { loadConfig } from "./config";
 import { createProfileRepository } from "./db/repository";
+import { assertDevelopmentAuthDisabled } from "./development-auth";
 
+assertDevelopmentAuthDisabled();
 const config = loadConfig();
 const repository = createProfileRepository(config.databaseUrl);
 const app = await addWebClient(createApp({ config, repository }));
