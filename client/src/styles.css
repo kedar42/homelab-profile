@@ -326,59 +326,11 @@ input {
   white-space: nowrap;
 }
 
-.security-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  margin-top: 22px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--line);
-}
-
-.security-summary div {
-  min-width: 0;
-  padding: 13px 14px;
-  background: #0d110f;
-}
-
-.security-summary span,
-.security-summary b {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.security-summary span {
-  margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 9px;
-  text-transform: uppercase;
-}
-
-.security-summary b {
-  color: var(--ink);
-  font-size: 11px;
-  font-weight: 600;
-}
-
 .save-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
+  justify-content: flex-end;
   padding-top: 22px;
-}
-
-.save-row span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .save-button {
@@ -432,12 +384,6 @@ input {
 
   .save-row {
     align-items: stretch;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .security-summary {
-    grid-template-columns: 1fr;
   }
 
   .save-button {

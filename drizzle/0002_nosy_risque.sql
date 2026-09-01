@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "delegated_credentials" text;

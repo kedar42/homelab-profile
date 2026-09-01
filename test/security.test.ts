@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { csrfToken, hashToken, randomToken, validCsrfToken } from "../src/security";
+import {
+  csrfToken,
+  hashToken,
+  openDelegatedCredentials,
+  randomToken,
+  sealDelegatedCredentials,
+  validCsrfToken,
+} from "../src/security";
 
 describe("security helpers", () => {
   test("generates URL-safe random tokens", () => {
@@ -29,5 +36,21 @@ describe("security helpers", () => {
     expect(
       validCsrfToken("a-different-cookie-secret-with-more-than-32-characters", "session-a", token),
     ).toBe(false);
+  });
+
+  test("encrypts delegated OAuth credentials at rest with authenticated encryption", async () => {
+    const secret = "a-secure-cookie-secret-with-more-than-32-characters";
+    const credentials = {
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: 1_800_000_000_000,
+    };
+    const sealed = await sealDelegatedCredentials(secret, credentials);
+
+    expect(sealed).not.toContain("access-token");
+    expect(await openDelegatedCredentials(secret, sealed)).toEqual(credentials);
+    await expect(
+      openDelegatedCredentials("a-different-cookie-secret-with-more-than-32-characters", sealed),
+    ).rejects.toThrow();
   });
 });

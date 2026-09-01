@@ -163,19 +163,6 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
     .slice(0, 2)
     .toUpperCase();
   const currentImage = previewUrl || profile.avatarUrl || undefined;
-  const methods = profile.security.authenticationMethods.map((method) => method.toLowerCase());
-  const usedMfa = methods.some((method) => ["mfa", "otp", "sms", "hwk", "swk"].includes(method));
-  const mfaStatus = methods.length === 0 ? "Not reported" : usedMfa ? "Used" : "Not used";
-  const emailStatus =
-    profile.security.emailVerified === null
-      ? "Not reported"
-      : profile.security.emailVerified
-        ? "Verified"
-        : "Not verified";
-  const sessionExpiry = new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(profile.security.sessionExpiresAt));
 
   return (
     <main className="app-page">
@@ -223,22 +210,7 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
                   <p>{profile.user.email}</p>
                 </div>
               </div>
-              <section className="security-summary" aria-label="Account security">
-                <div>
-                  <span>Email</span>
-                  <b>{emailStatus}</b>
-                </div>
-                <div title="Methods used for this sign-in; this does not indicate factor enrollment.">
-                  <span>MFA this sign-in</span>
-                  <b>{mfaStatus}</b>
-                </div>
-                <div>
-                  <span>Session expires</span>
-                  <b>{sessionExpiry}</b>
-                </div>
-              </section>
               <div className="save-row">
-                <span title={file?.name}>{file?.name || "No pending changes"}</span>
                 <Button
                   className="save-button"
                   isDisabled={!file}

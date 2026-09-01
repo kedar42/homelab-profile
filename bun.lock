@@ -14,6 +14,7 @@
         "drizzle-orm": "0.45.2",
         "elysia": "1.4.30",
         "elysia-rate-limit": "4.6.2",
+        "jose": "6.2.10",
         "openid-client": "6.8.7",
         "react": "19.2.8",
         "react-dom": "19.2.8",

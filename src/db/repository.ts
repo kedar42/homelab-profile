@@ -20,6 +20,7 @@ export interface SessionRecord {
   emailVerified: boolean | null;
   authenticationMethods: string[];
   pictureUrl: string | null;
+  delegatedCredentials: string | null;
   expiresAt: Date;
 }
 
@@ -36,6 +37,7 @@ export interface ProfileRepository {
   createSession(record: SessionRecord): Promise<void>;
   findSession(idHash: string, now?: Date): Promise<SessionRecord | null>;
   deleteSession(idHash: string): Promise<void>;
+  updateSessionCredentials(idHash: string, delegatedCredentials: string): Promise<void>;
   createOidcTransaction(record: OidcTransactionRecord): Promise<void>;
   consumeOidcTransaction(idHash: string, now?: Date): Promise<OidcTransactionRecord | null>;
   findAvatarBySubject(subject: string): Promise<AvatarRecord | null>;
@@ -62,6 +64,7 @@ interface SessionRow {
   email_verified: boolean | number | null;
   authentication_methods: string;
   picture_url: string | null;
+  delegated_credentials: string | null;
   expires_at: Date | string;
 }
 
@@ -107,6 +110,7 @@ function sessionRecord(row: SessionRow): SessionRecord {
       row.email_verified === null ? null : row.email_verified === true || row.email_verified === 1,
     authenticationMethods,
     pictureUrl: row.picture_url,
+    delegatedCredentials: row.delegated_credentials,
     expiresAt: asDate(row.expires_at),
   };
 }
@@ -154,8 +158,8 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
       await query(
         `insert into sessions
           (id_hash, subject, username, display_name, email, email_verified,
-           authentication_methods, picture_url, expires_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+           authentication_methods, picture_url, delegated_credentials, expires_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           record.idHash,
           record.subject,
@@ -165,6 +169,7 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
           record.emailVerified,
           JSON.stringify(record.authenticationMethods),
           record.pictureUrl,
+          record.delegatedCredentials,
           record.expiresAt.toISOString(),
         ],
       );
@@ -172,7 +177,7 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
     async findSession(idHash, now = new Date()) {
       const [row] = await query<SessionRow>(
         `select id_hash, subject, username, display_name, email, email_verified,
-                authentication_methods, picture_url, expires_at
+                authentication_methods, picture_url, delegated_credentials, expires_at
          from sessions where id_hash = $1 and expires_at > $2 limit 1`,
         [idHash, now.toISOString()],
       );
@@ -180,6 +185,12 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
     },
     async deleteSession(idHash) {
       await query("delete from sessions where id_hash = $1", [idHash]);
+    },
+    async updateSessionCredentials(idHash, delegatedCredentials) {
+      await query("update sessions set delegated_credentials = $1 where id_hash = $2", [
+        delegatedCredentials,
+        idHash,
+      ]);
     },
     async createOidcTransaction(record) {
       await query(

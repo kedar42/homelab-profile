@@ -19,6 +19,7 @@ export const sessions = pgTable(
     emailVerified: boolean("email_verified"),
     authenticationMethods: text("authentication_methods").notNull().default("[]"),
     pictureUrl: text("picture_url"),
+    delegatedCredentials: text("delegated_credentials"),
     expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
   },
   (table) => [index("sessions_expires_at_idx").on(table.expiresAt)],

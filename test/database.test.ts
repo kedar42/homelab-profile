@@ -53,6 +53,7 @@ describe("SQLite profile repository", () => {
         emailVerified: true,
         authenticationMethods: ["pwd", "mfa"],
         pictureUrl: null,
+        delegatedCredentials: "encrypted-oauth-credentials",
         expiresAt: new Date(now.getTime() + 60_000),
       });
       expect(await repository.findSession("session-hash", now)).toMatchObject({
@@ -60,6 +61,7 @@ describe("SQLite profile repository", () => {
         username: "developer",
         emailVerified: true,
         authenticationMethods: ["pwd", "mfa"],
+        delegatedCredentials: "encrypted-oauth-credentials",
       });
 
       await repository.createOidcTransaction({
@@ -81,15 +83,21 @@ describe("SQLite profile repository", () => {
         version: "8e36fdcf-c920-4e15-bf42-5ca12f48a9f0",
         updatedAt: now,
       });
-      const replacedAvatar = await repository.upsertAvatar({
+      await repository.upsertAvatar({
         ...firstAvatar,
-        publicId: "44de0ccd-b09e-46eb-adc0-6ba078e9852b",
         filename: "second.webp",
         version: "0147a8b1-0671-465a-b937-41069f2acb01",
         updatedAt: new Date(now.getTime() + 1_000),
       });
-      expect(replacedAvatar.publicId).toBe(firstAvatar.publicId);
       expect((await repository.findAvatarBySubject("subject-1"))?.filename).toBe("second.webp");
+      expect(
+        await repository.findAvatarByPublicId("3f6bf3d8-069f-4e2d-9e52-ccf50b065f82"),
+      ).toMatchObject({ subject: "subject-1", filename: "second.webp" });
+
+      await repository.updateSessionCredentials("session-hash", "rotated-oauth-credentials");
+      expect((await repository.findSession("session-hash", now))?.delegatedCredentials).toBe(
+        "rotated-oauth-credentials",
+      );
 
       await repository.deleteSession("session-hash");
       expect(await repository.findSession("session-hash", now)).toBeNull();

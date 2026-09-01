@@ -19,6 +19,7 @@ export const sessions = sqliteTable(
     emailVerified: integer("email_verified", { mode: "boolean" }),
     authenticationMethods: text("authentication_methods").notNull().default("[]"),
     pictureUrl: text("picture_url"),
+    delegatedCredentials: text("delegated_credentials"),
     expiresAt: text("expires_at").notNull(),
   },
   (table) => [index("sessions_expires_at_idx").on(table.expiresAt)],

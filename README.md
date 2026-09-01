@@ -1,6 +1,6 @@
 # Homelab Profile
 
-Homelab Profile is a self-service account page for a homelab. Users sign in with Authentik, inspect the identity claims exposed to the application, and upload one normalized profile picture at a stable public endpoint. A lightweight development identity exercises the same local session and profile flow without contacting Authentik.
+Homelab Profile is a self-service account page for a homelab. Users sign in with Authentik and grant the application delegated access to update their own Authentik profile. An uploaded picture is normalized and served at a stable opaque URL, which the application writes to the signed-in user's avatar attribute through Authentik's native OAuth flow. Authentik remains the profile authority and publishes the result through its standard OIDC `picture` claim. A lightweight development identity exercises the local session, upload, and storage flow without contacting Authentik.
 
 The repository is a verified `0.1.0` bootstrap: dependencies are exactly pinned in `bun.lock`, SQLite and PostgreSQL have reviewed initial migrations, formatting and linting are enforced with Biome, and CI runs type checks, tests, a production build, and both Drizzle migration checks. Live Authentik and PostgreSQL integration still requires those external services.
 
@@ -21,7 +21,9 @@ flowchart LR
     Browser -->|Eden Treaty| API
     Browser -. development assets .-> Vite
     Vite -->|/api /auth /avatars proxy| API
-    API <-->|OIDC code flow + PKCE| Auth
+    API <-->|OIDC code flow + PKCE
+    delegated user API| Auth
+    Auth -->|native picture claim| API
     DevIdentity -. development entry only .-> API
     API <-->|One repository + Bun SQL| DB
     API -->|Sharp-normalized WebP| Files
@@ -37,7 +39,7 @@ In development, Vite serves the browser client on port `5173` and proxies applic
 | Runtime and package manager | Bun 1.3 | Runs TypeScript, installs from `bun.lock`, supplies Bun SQL, file APIs, and the test runner. |
 | HTTP server | Elysia 1.4 | Typed routes, validation, cookie schemas, lifecycle hooks, OpenAPI, and static serving. |
 | API client | Eden Treaty | Infers browser API types from the exported Elysia application type without a generated client. |
-| UI | React 19 + HeroUI v3 | Login and profile screens built from HeroUI compound components such as `Alert`, `Avatar`, `Button`, `Card`, `Chip`, and `Spinner`. |
+| UI | React 19 + HeroUI v3 | Login and profile screens built from HeroUI components including `Avatar`, `Button`, `Card`, `Spinner`, and toasts. |
 | Styling | Tailwind CSS 4 + HeroUI styles | Vite-native Tailwind integration, HeroUI tokens, and an application-specific stylesheet. |
 | Authentication | Authentik + `openid-client` 6 | OIDC discovery and authorization-code flow with PKCE, state, and nonce. |
 | Persistence | Bun SQL + SQLite/PostgreSQL + Drizzle Kit | One repository stores sessions, OIDC transactions, and avatar metadata. SQLite is the embedded local default; PostgreSQL is required in production. Drizzle owns dialect-specific schemas and migrations. |
@@ -59,20 +61,31 @@ The dependency set was reviewed against current upstream documentation on 2026-0
 
 In lightweight development mode, `GET /login` skips only the OIDC exchange. It creates the same hashed database session from the explicitly configured local identity, after which profile reads, CSRF protection, uploads, storage, and logout use the production code paths.
 
-The compact security summary shows the OIDC `email_verified` claim, the authentication methods (`amr`) used for the current sign-in, and local session expiry. Authentication methods are evidence about this login, not proof that a second factor is enrolled on the account; absent claims are shown as “Not reported” rather than guessed.
-
 ### Avatar upload
 
 1. `GET /api/me` returns the authenticated profile, an HMAC-derived CSRF token, and the server's accepted MIME types and byte limit.
 2. The client validates those advertised limits for immediate feedback; the server independently enforces them.
 3. `POST /api/profile/avatar` checks the session, CSRF token, rate limit, declared MIME type, decoded media type, size, and decoded pixel count.
 4. Sharp applies orientation, crops and resizes to `512 × 512`, and re-encodes to WebP.
-5. The file is atomically renamed into `AVATAR_DIR`, then its metadata is upserted through the shared repository. Database failure removes the new file; success removes the superseded file.
-6. `GET /avatars/:publicId` serves the result with an ETag and public cache headers. The opaque UUID remains stable across username changes; the query-string version changes after each upload for cache busting.
+5. The file is atomically renamed into `AVATAR_DIR`, then its metadata is upserted through the shared repository with one stable random public UUID.
+6. The authenticated session's verified OIDC `sub` determines the only avatar the request can replace; the browser does not supply an owner identifier.
+7. On every upload, the server uses the session's encrypted delegated token to resolve `GET /api/v3/core/users/me/`, then idempotently patches only that returned user's `attributes.avatar` URL.
+8. `GET /avatars/:publicId` serves the current WebP. The opaque URL never changes; a private revalidation policy and version ETag refresh replacements without exposing the OIDC subject.
+9. Authentik supplies the initials fallback before an avatar is configured. This service does not expose a fallback endpoint that can be used to probe OIDC subjects.
 
-### Authentik `picture` integration
+### Native Authentik integration
 
-This service does **not** modify Authentik users or claims. It returns and hosts a public avatar URL. An external integration should persist the stable, queryless `https://profile.example.com/avatars/<publicId>` endpoint in an Authentik user attribute, then expose that attribute as `picture` through an OAuth2 scope mapping. The `?v=<version>` URL returned to this UI is only a cache-busting display URL and changes after each upload. A username-only property mapping cannot reconstruct the opaque public ID, and the application deliberately avoids mutable usernames in public object addresses.
+The application uses one authorization-code flow with PKCE, state, and nonce. It requests:
+
+```text
+openid profile email goauthentik.io/api offline_access
+```
+
+`goauthentik.io/api` delegates Authentik API access on behalf of the signed-in user; `offline_access` supplies a refresh token so that delegation remains usable for the local session lifetime. Both tokens stay on the server and are stored as an authenticated-encryption JWE. Logout attempts to revoke the delegated refresh token before deleting the local session.
+
+Keep Authentik's built-in `openid`, `profile`, `email`, `goauthentik.io/api`, and `offline_access` scope mappings selected. Do not create a custom `picture` mapping: Authentik's maintained `profile` mapping already publishes `request.user.avatar`.
+
+Authentik deployment configuration is intentionally outside this application's runtime authority. Before production, its administrator must configure the avatar source/fallback (for example `attributes.avatar,initials`), enable the two delegated scopes on this provider, use an authorization flow that presents the requested consent, and grant the normal user only the Authentik permission required to update their own record. The application never changes those settings, assigns Authentik permissions, accepts a target user ID from the browser, or uses an administrative/service-account token.
 
 ## Repository layout
 
@@ -113,9 +126,9 @@ This service does **not** modify Authentik users or claims. It returns and hosts
 
 ## Data model
 
-- `sessions` stores hashed local session IDs, essential Authentik identity and sign-in-security claims, and expiry times.
+- `sessions` stores hashed local session IDs, essential Authentik identity claims, encrypted delegated OAuth credentials, and expiry times.
 - `oidc_transactions` stores hashed, single-use callback state with PKCE verifier, state, nonce, and expiry.
-- `avatars` stores one current file per stable OIDC subject, addressed publicly by an independent UUID.
+- `avatars` stores one current file per stable OIDC subject and a separate opaque public UUID. Filenames contain only a SHA-256-derived prefix.
 
 Expired records are rejected during reads and pruned when a new login begins. PostgreSQL and SQLite migration histories live in `drizzle/` and `drizzle-sqlite/` respectively. Their table and column contracts match, while backend-specific DDL stays confined to these migration schemas.
 
@@ -163,7 +176,7 @@ DEV_AUTH_DISPLAY_NAME=Local Developer
 DEV_AUTH_EMAIL=developer@localhost
 ```
 
-Start the normal development servers and select **Use local developer**. No Authentik discovery, redirect, token exchange, mock identity-provider deployment, or database server occurs. Bun opens `./data/profile.sqlite`; sessions, CSRF, avatar metadata, migrations, and storage still exercise the real repository contract.
+Start the normal development servers and select **Use local developer**. No Authentik discovery, redirect, delegated API request, token exchange, mock identity-provider deployment, or database server occurs. Bun opens `./data/profile.sqlite`; sessions, CSRF, avatar metadata, migrations, and storage still exercise the real repository contract.
 
 When local authentication is enabled, `src/dev.ts` replaces an absent or unchanged `COOKIE_SECRET=replace-me` value with a built-in development-only secret. An explicitly configured secret is always preserved. Real OIDC mode and production still reject the placeholder.
 
@@ -235,13 +248,16 @@ Run the migration as an explicit release step before starting the new applicatio
 ## Security baseline
 
 - OIDC authorization-code flow with PKCE, state, nonce, and one-time transactions.
+- Authentik API mutation uses access granted by the signed-in user through the same OAuth flow; no administrative credential is configured.
+- Delegated access and refresh tokens are JWE-encrypted at rest and the refresh token is revoked on logout when Authentik is available.
 - Development authentication is injected only by the development process entry; production fails closed when its flag is enabled.
 - Random session and transaction tokens; only SHA-256 hashes are stored.
 - HttpOnly, SameSite=Lax cookies; `Secure` over HTTPS.
 - Session-bound HMAC CSRF tokens for avatar mutation.
 - Elysia schema validation and a maintained rate-limit plugin instead of local parsing/limiter implementations; authenticated upload buckets use a hashed session key.
 - Sharp decode limits and forced WebP re-encoding; original uploads are never served.
-- Server-generated filenames, immutable public IDs, ETags, and restrictive browser security headers.
+- Server-generated hashed filenames, stable random public IDs, private-cache ETags, indexing opt-out headers, and restrictive browser security headers.
+- Upload ownership comes from the verified OIDC subject; the Authentik target comes only from its delegated `/users/me/` response.
 - Exact dependency pins, a committed lockfile, automated checks, and read-only CI permissions.
 
 ## Remaining operational boundaries
@@ -249,7 +265,7 @@ Run the migration as an explicit release step before starting the new applicatio
 - The upload/login limiter is in-memory and per process. Authenticated uploads key by hashed session; unauthenticated requests use the direct connection address. Multi-replica deployment needs a shared limiter, and trusted-proxy client-IP handling must match the deployment topology.
 - Avatar files live on the local filesystem. Multiple replicas need shared storage or an object-store adapter.
 - Simultaneous uploads for the same subject can leave a superseded file behind. Metadata remains correct, but production at scale should serialize replacements per subject or run an idempotent orphan cleanup job.
-- The automated suite migrates and exercises a real SQLite file. A live PostgreSQL migration test and full Authentik browser flow belong in environment-level integration tests.
+- The automated suite migrates and exercises a real SQLite file. A live PostgreSQL migration test and a complete Authentik consent/RBAC/API flow belong in environment-level integration tests.
 - No container image is prescribed because storage, proxy, and migration orchestration are deployment-specific. The documented Bun release sequence is the supported runtime contract.
 
 ## Upstream references
@@ -267,5 +283,7 @@ Run the migration as an explicit release step before starting the new applicatio
 - [`openid-client` API](https://github.com/panva/openid-client/blob/main/docs/README.md)
 - [Authentik OAuth2/OIDC provider](https://docs.goauthentik.io/add-secure-apps/providers/oauth2)
 - [Authentik property mappings](https://docs.goauthentik.io/add-secure-apps/providers/property-mappings/)
+- [Authentik avatar settings](https://docs.goauthentik.io/sys-mgmt/settings/)
+- [Authentik user properties](https://docs.goauthentik.io/users-sources/user/user_ref)
 - [Sharp documentation](https://sharp.pixelplumbing.com/)
 - [Biome configuration](https://biomejs.dev/reference/configuration/)

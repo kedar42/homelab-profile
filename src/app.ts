@@ -6,16 +6,32 @@ import { staticPlugin } from "@elysia/static";
 import { Elysia, file, t } from "elysia";
 import { rateLimit } from "elysia-rate-limit";
 import * as oidc from "openid-client";
+import {
+  AUTHENTIK_DELEGATED_SCOPES,
+  type AuthentikUserApi,
+  AuthentikUserApiError,
+  createAuthentikUserApi,
+  delegatedCredentialsFromTokens,
+} from "./authentik";
 import { ACCEPTED_IMAGE_TYPES, AvatarUploadError, processAvatarUpload } from "./avatar";
 import type { AppConfig } from "./config";
 import type { ProfileRepository } from "./db/repository";
 import type { DevelopmentIdentity } from "./development-auth";
-import { csrfToken, hashToken, randomToken, validCsrfToken } from "./security";
+import {
+  csrfToken,
+  type DelegatedCredentials,
+  hashToken,
+  openDelegatedCredentials,
+  randomToken,
+  sealDelegatedCredentials,
+  validCsrfToken,
+} from "./security";
 
 export interface AppDependencies {
   config: AppConfig;
   repository: ProfileRepository;
   developmentIdentity?: DevelopmentIdentity | null;
+  authentikUserApi?: AuthentikUserApi;
 }
 
 function cookieSettings(config: AppConfig) {
@@ -33,10 +49,8 @@ async function currentSession(sessionId: string | undefined, repository: Profile
   return session ? { id: sessionId, record: session } : null;
 }
 
-function publicAvatarUrl(config: AppConfig, publicId: string, version: string): string {
-  const url = new URL(`/avatars/${publicId}`, config.appUrl);
-  url.searchParams.set("v", version);
-  return url.href;
+function publicAvatarUrl(config: AppConfig, publicId: string): string {
+  return new URL(`/avatars/${publicId}`, config.appUrl).href;
 }
 
 function stringArrayClaim(value: unknown): string[] {
@@ -67,7 +81,12 @@ const profileModel = t.Object({
   acceptedImageTypes: t.Array(t.String()),
 });
 
-export function createApp({ config, repository, developmentIdentity }: AppDependencies) {
+export function createApp({
+  config,
+  repository,
+  developmentIdentity,
+  authentikUserApi,
+}: AppDependencies) {
   const authenticationMode: "development" | "oidc" = developmentIdentity ? "development" : "oidc";
   let oidcConfiguration: Promise<oidc.Configuration> | undefined;
   const getOidcConfiguration = () => {
@@ -78,6 +97,9 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
     );
     return oidcConfiguration;
   };
+  const userApi =
+    authentikUserApi ??
+    createAuthentikUserApi({ issuer: config.oidcIssuer, getConfiguration: getOidcConfiguration });
 
   return new Elysia({ name: "profile" })
     .use(
@@ -167,6 +189,7 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
             await repository.createSession({
               idHash: await hashToken(sessionId),
               ...developmentIdentity,
+              delegatedCredentials: null,
               expiresAt: new Date(Date.now() + config.sessionTtlDays * 24 * 60 * 60_000),
             });
             profile_session.value = sessionId;
@@ -206,7 +229,7 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
 
           const authorizationUrl = oidc.buildAuthorizationUrl(configuration, {
             redirect_uri: new URL("/auth/callback", config.appUrl).href,
-            scope: "openid profile email",
+            scope: AUTHENTIK_DELEGATED_SCOPES,
             code_challenge: codeChallenge,
             code_challenge_method: "S256",
             state,
@@ -264,6 +287,10 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
             typeof claims.email_verified === "boolean" ? claims.email_verified : null;
           const authenticationMethods = stringArrayClaim(claims.amr);
           const pictureUrl = typeof claims.picture === "string" ? claims.picture : null;
+          const delegatedCredentials = await sealDelegatedCredentials(
+            config.cookieSecret,
+            delegatedCredentialsFromTokens(tokens),
+          );
           const sessionId = randomToken();
           const expiresAt = new Date(Date.now() + config.sessionTtlDays * 24 * 60 * 60_000);
 
@@ -276,6 +303,7 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
             emailVerified,
             authenticationMethods,
             pictureUrl,
+            delegatedCredentials,
             expiresAt,
           });
           profile_session.value = sessionId;
@@ -322,7 +350,7 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
                 sessionExpiresAt: session.record.expiresAt.toISOString(),
               },
               avatarUrl: avatar
-                ? publicAvatarUrl(config, avatar.publicId, avatar.version)
+                ? publicAvatarUrl(config, avatar.publicId)
                 : session.record.pictureUrl,
               csrfToken: csrfToken(config.cookieSecret, session.id),
               maxUploadBytes: config.maxUploadBytes,
@@ -345,7 +373,7 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
             }
             const version = crypto.randomUUID();
             const previous = await repository.findAvatarBySubject(session.record.subject);
-            let publicId = previous?.publicId ?? crypto.randomUUID();
+            const publicId = previous?.publicId ?? crypto.randomUUID();
             try {
               const filename = await processAvatarUpload(body.avatar, {
                 avatarDir: config.avatarDir,
@@ -354,14 +382,13 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
                 version,
               });
               try {
-                const stored = await repository.upsertAvatar({
+                await repository.upsertAvatar({
                   subject: session.record.subject,
                   publicId,
                   filename,
                   version,
                   updatedAt: new Date(),
                 });
-                publicId = stored.publicId;
               } catch (error) {
                 await unlink(join(config.avatarDir, filename)).catch(() => undefined);
                 throw error;
@@ -369,9 +396,41 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
               if (previous?.filename && previous.filename !== filename) {
                 await unlink(join(config.avatarDir, previous.filename)).catch(() => undefined);
               }
-              return { avatarUrl: publicAvatarUrl(config, publicId, version) };
+              const avatarUrl = publicAvatarUrl(config, publicId);
+              if (!developmentIdentity) {
+                if (!session.record.delegatedCredentials) {
+                  throw new AuthentikUserApiError(
+                    "The delegated Authentik authorization is unavailable.",
+                  );
+                }
+                let updatedCredentials: DelegatedCredentials;
+                try {
+                  const credentials = await openDelegatedCredentials(
+                    config.cookieSecret,
+                    session.record.delegatedCredentials,
+                  );
+                  updatedCredentials = await userApi.setOwnAvatar(credentials, avatarUrl);
+                } catch (error) {
+                  if (error instanceof AuthentikUserApiError) throw error;
+                  throw new AuthentikUserApiError(
+                    "The delegated Authentik authorization could not be used.",
+                    { cause: error },
+                  );
+                }
+                await repository.updateSessionCredentials(
+                  session.record.idHash,
+                  await sealDelegatedCredentials(config.cookieSecret, updatedCredentials),
+                );
+              }
+              return { avatarUrl };
             } catch (error) {
               if (error instanceof AvatarUploadError) return status(422, { error: error.message });
+              if (error instanceof AuthentikUserApiError) {
+                return status(502, {
+                  error:
+                    "The image was saved, but Authentik could not update your profile. Try again.",
+                });
+              }
               console.error("Avatar upload failed", error);
               return status(500, { error: "The image could not be saved. Please try again." });
             }
@@ -392,6 +451,7 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
               422: errorModel,
               429: errorModel,
               500: errorModel,
+              502: errorModel,
             },
             detail: { tags: ["Profile"], summary: "Replace the signed-in user's profile picture" },
           },
@@ -400,7 +460,23 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
           "/logout",
           async ({ cookie: { profile_session } }) => {
             const sessionId = profile_session.value;
-            if (sessionId) await repository.deleteSession(await hashToken(sessionId));
+            if (sessionId) {
+              const idHash = await hashToken(sessionId);
+              const session = await repository.findSession(idHash);
+              if (session?.delegatedCredentials && !developmentIdentity) {
+                try {
+                  await userApi.revoke(
+                    await openDelegatedCredentials(
+                      config.cookieSecret,
+                      session.delegatedCredentials,
+                    ),
+                  );
+                } catch (error) {
+                  console.error("Unable to revoke delegated Authentik access", error);
+                }
+              }
+              await repository.deleteSession(idHash);
+            }
             profile_session.remove();
             return { ok: true as const };
           },
@@ -418,18 +494,21 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
         if (!avatar || !/^[a-f0-9]{40}-[a-f0-9-]{36}\.webp$/.test(avatar.filename)) {
           return status(404, { error: "Profile picture not found." });
         }
-        const file = Bun.file(join(config.avatarDir, avatar.filename));
-        if (!(await file.exists())) return status(404, { error: "Profile picture not found." });
+        const image = Bun.file(join(config.avatarDir, avatar.filename));
+        if (!(await image.exists())) return status(404, { error: "Profile picture not found." });
         const etag = `"${avatar.version}"`;
-        set.headers["cache-control"] = "public, max-age=3600, stale-while-revalidate=86400";
+        set.headers["cache-control"] = "private, no-cache";
+        set.headers["x-robots-tag"] = "noindex, noimageindex";
         set.headers.etag = etag;
         if (request.headers.get("if-none-match") === etag) return status(304);
         set.headers["content-type"] = "image/webp";
-        return file;
+        return image;
       },
       {
-        params: t.Object({ publicId: t.String({ format: "uuid" }) }),
-        detail: { tags: ["Avatars"], summary: "Public stable avatar URL for Authentik" },
+        params: t.Object({
+          publicId: t.String({ format: "uuid" }),
+        }),
+        detail: { tags: ["Avatars"], summary: "Serve an opaque public avatar URL" },
       },
     );
 }

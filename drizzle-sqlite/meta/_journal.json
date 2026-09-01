@@ -15,6 +15,13 @@
       "when": 1788261546301,
       "tag": "0001_confused_frog_thor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788266458510,
+      "tag": "0002_flowery_ronan",
+      "breakpoints": true
     }
   ]
 }
