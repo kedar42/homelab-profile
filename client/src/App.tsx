@@ -6,10 +6,9 @@ import {
   CircleInfo,
   Lock,
   Person,
-  Picture,
   ShieldCheck,
 } from "@gravity-ui/icons";
-import { Alert, Avatar, Button, Card, Chip, Separator, Spinner } from "@heroui/react";
+import { Alert, Avatar, Button, Card, Chip, Spinner } from "@heroui/react";
 import { type ChangeEvent, type DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
@@ -40,7 +39,9 @@ function Brand() {
         <i />
         <i />
       </span>
-      <span>Profile</span>
+      <span>
+        id<span className="brand-separator">.</span>homelab
+      </span>
     </a>
   );
 }
@@ -58,64 +59,57 @@ function LoginScreen({ authenticationMode }: { authenticationMode: Authenticatio
   const isDevelopment = authenticationMode === "development";
   return (
     <main className="login-page">
-      <header className="login-header">
+      <header className="site-header">
         <Brand />
-        <Chip color={isDevelopment ? "warning" : "success"} variant="soft" size="sm">
-          {isDevelopment ? "Local development" : "Homelab service"}
-        </Chip>
+        <span className="service-status">
+          <i aria-hidden="true" /> profile service
+        </span>
       </header>
-      <section className="login-grid">
+      <section className="login-content" aria-labelledby="login-title">
         <div className="login-copy">
-          <p className="eyebrow">
-            {isDevelopment ? "Lightweight development identity" : "Your identity, in one place"}
-          </p>
-          <h1>
-            Put a face to <span>your account.</span>
+          <p className="path-label">AUTH / PROFILE</p>
+          <h1 id="login-title">
+            Sign in to your
+            <span> homelab profile.</span>
           </h1>
           <p className="intro">
-            {isDevelopment
-              ? "Use the identity configured in your local environment. No Authentik deployment is contacted in this mode."
-              : "View the details connected to your homelab account and choose the picture that represents you across our services."}
+            View the identity your services know and manage the avatar shared across your homelab.
           </p>
           <Button
             className="login-button"
             size="lg"
             onPress={() => window.location.assign("/login")}
           >
-            {isDevelopment ? "Use local developer" : "Continue with SSO"} <ArrowRight />
+            {isDevelopment ? "Continue as local developer" : "Continue with Authentik"}
+            <ArrowRight />
           </Button>
           <div className="login-assurance">
             {isDevelopment ? <CircleInfo /> : <ShieldCheck />}
             <span>
               {isDevelopment
-                ? "Development only—production refuses this mode."
-                : "You’ll continue securely through Authentik."}
+                ? "Local identity · no external provider contacted"
+                : "OIDC authorization code flow · PKCE protected"}
             </span>
           </div>
         </div>
-        <div className="identity-art" aria-hidden="true">
-          <div className="orb orb-one" />
-          <div className="orb orb-two" />
-          <Card className="art-card art-card-back" variant="secondary">
-            <span>HOMELAB</span>
-            <b>01</b>
-          </Card>
-          <Card className="art-card art-card-front" variant="default">
-            <div className="art-avatar">P</div>
-            <div>
-              <small>PROFILE</small>
-              <strong>
-                Your space.
-                <br />
-                Your picture.
-              </strong>
-            </div>
-          </Card>
-        </div>
+        <section className="login-meta" aria-label="Authentication details">
+          <div>
+            <span className="meta-label">provider</span>
+            <code className="meta-value">{isDevelopment ? "local-dev" : "authentik"}</code>
+          </div>
+          <div>
+            <span className="meta-label">session</span>
+            <code className="meta-value">server-side</code>
+          </div>
+          <div>
+            <span className="meta-label">scope</span>
+            <code className="meta-value">openid profile email</code>
+          </div>
+        </section>
       </section>
-      <footer className="login-footer">
-        <span>Private by design</span>
-        <span>One image. Everywhere.</span>
+      <footer className="site-footer">
+        <span>self-hosted identity</span>
+        <span>status: ready</span>
       </footer>
     </main>
   );
@@ -245,72 +239,68 @@ function ProfileScreen({
 
   return (
     <main className="app-page">
-      <header className="app-header">
+      <header className="site-header">
         <Brand />
         <div className="header-user">
-          {authenticationMode === "development" && (
-            <Chip color="warning" variant="soft" size="sm">
-              Local identity
-            </Chip>
-          )}
-          <Chip variant="soft" size="sm">
-            {profile.user.displayName}
-          </Chip>
-          <Button variant="ghost" size="sm" onPress={signOut}>
+          <span className="service-status">
+            <i aria-hidden="true" />
+            {authenticationMode === "development" ? "local" : "authentik"}
+          </span>
+          <Button className="sign-out" variant="ghost" size="sm" onPress={signOut}>
             <ArrowRightFromSquare /> Sign out
           </Button>
         </div>
       </header>
 
-      <div className="dashboard-grid">
-        <aside className="profile-aside">
-          <p className="eyebrow">Account</p>
-          <h1>Your profile</h1>
-          <p>
-            This is how you appear around the homelab. For now, only your picture can be changed
-            here.
-          </p>
-          <Separator />
-          <span className="section-label">Available setting</span>
-          <div className="nav-item">
-            <span>
-              <Picture />
-            </span>
-            <div>
-              <b>Profile picture</b>
-              <small>Image and crop</small>
-            </div>
+      <div className="profile-content">
+        <section className="profile-intro" aria-labelledby="profile-title">
+          <div>
+            <p className="path-label">HOME / PROFILE</p>
+            <h1 id="profile-title">{profile.user.displayName}</h1>
+            <p className="profile-handle">@{profile.user.username}</p>
           </div>
-        </aside>
+          <Chip className="identity-chip" variant="soft" size="sm">
+            <span className="chip-dot" aria-hidden="true" /> identity active
+          </Chip>
+        </section>
 
-        <section className="profile-content" aria-labelledby="picture-title">
+        <section aria-labelledby="picture-title">
           {notice && <StatusAlert kind={notice.kind} message={notice.message} />}
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Profile picture</p>
-              <h2 id="picture-title">Make it recognisably you.</h2>
-            </div>
-            <Chip color="success" variant="soft" size="sm">
-              <Check /> Public profile URL
-            </Chip>
-          </div>
-
-          <Card className="avatar-card" variant="secondary">
-            <Card.Content className="avatar-card-content">
-              <div className="avatar-wrap">
-                <Avatar className="profile-avatar" color="accent" variant="soft">
-                  {currentImage && (
-                    <Avatar.Image
-                      src={currentImage}
-                      alt={`${profile.user.displayName}'s profile picture`}
-                    />
-                  )}
-                  <Avatar.Fallback>{initials || <Person />}</Avatar.Fallback>
-                </Avatar>
-                <span className="avatar-orbit" aria-hidden="true" />
+          <Card className="profile-card" variant="secondary">
+            <Card.Content className="profile-card-content">
+              <div className="profile-summary">
+                <div className="avatar-wrap">
+                  <Avatar className="profile-avatar" color="accent" variant="soft">
+                    {currentImage && (
+                      <Avatar.Image
+                        src={currentImage}
+                        alt={`${profile.user.displayName}'s profile picture`}
+                      />
+                    )}
+                    <Avatar.Fallback>{initials || <Person />}</Avatar.Fallback>
+                  </Avatar>
+                  <span className="avatar-status">
+                    <span className="sr-only">Identity active</span>
+                  </span>
+                </div>
+                <div className="summary-copy">
+                  <span className="summary-label">primary identity</span>
+                  <h2>{profile.user.displayName}</h2>
+                  <p>{profile.user.email}</p>
+                  <span className="public-state">
+                    <Check /> public avatar endpoint
+                  </span>
+                </div>
               </div>
 
-              <div className="upload-column">
+              <div className="avatar-settings">
+                <div className="setting-heading">
+                  <div>
+                    <span className="setting-title">Avatar</span>
+                    <p id="picture-title">Replace the image used by homelab services.</p>
+                  </div>
+                  <code>512×512 webp</code>
+                </div>
                 <input
                   ref={inputRef}
                   className="sr-only"
@@ -336,39 +326,39 @@ function ProfileScreen({
                   </span>
                   <div>
                     <b>{file?.name || "Choose a new picture"}</b>
-                    <small>{file ? "Ready to save" : "or drop an image here"}</small>
+                    <small>{file ? "ready to write" : "click or drop an image"}</small>
                   </div>
-                  <span className="browse-action">Browse</span>
+                  <span className="browse-action">select</span>
                 </button>
                 <div className="upload-meta">
-                  <span>JPEG, PNG, WebP or AVIF</span>
-                  <span>Up to {maxSize} MB</span>
+                  <span>jpeg · png · webp · avif</span>
+                  <span>max {maxSize} mb</span>
                 </div>
                 <Button
+                  className="save-button"
                   fullWidth
-                  size="lg"
                   isDisabled={!file}
                   isPending={isSaving}
                   onPress={saveAvatar}
                 >
-                  {isSaving ? "Saving picture" : "Save new picture"} {!isSaving && <ArrowRight />}
+                  {isSaving ? "Writing avatar" : "Update avatar"} {!isSaving && <ArrowRight />}
                 </Button>
               </div>
             </Card.Content>
           </Card>
+        </section>
 
-          <Separator className="content-divider" />
-
-          <div className="section-heading details-heading">
+        <section className="identity-section" aria-labelledby="identity-title">
+          <div className="section-heading">
             <div>
-              <p className="eyebrow">Identity</p>
-              <h2>Account details</h2>
+              <p className="path-label">IDENTITY / CLAIMS</p>
+              <h2 id="identity-title">Account details</h2>
             </div>
-            <Chip variant="soft" size="sm">
+            <Chip className="readonly-chip" variant="soft" size="sm">
               <Lock /> Read only
             </Chip>
           </div>
-          <Card className="details-card" variant="default">
+          <Card className="details-card" variant="secondary">
             <Card.Content className="details-grid">
               <Detail label="Display name" value={profile.user.displayName} />
               <Detail label="Username" value={profile.user.username} />
@@ -387,12 +377,10 @@ function ProfileScreen({
         </section>
       </div>
 
-      <footer className="app-footer">
-        <span>Profile service</span>
+      <footer className="site-footer">
+        <span>id.homelab</span>
         <span>
-          {authenticationMode === "development"
-            ? "Local development identity"
-            : "Identity managed by Authentik"}
+          {authenticationMode === "development" ? "source: local environment" : "source: authentik"}
         </span>
       </footer>
     </main>
