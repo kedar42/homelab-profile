@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 export interface AppConfig {
   appUrl: URL;
   port: number;
-  databaseUrl: string;
   avatarDir: string;
   maxUploadBytes: number;
   oidcIssuer: URL;
@@ -47,7 +46,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   return {
     appUrl,
     port: positiveInteger(env.PORT, 3000, "PORT"),
-    databaseUrl: required(env, "DATABASE_URL"),
     avatarDir: resolve(env.AVATAR_DIR?.trim() || "./data/avatars"),
     maxUploadBytes: positiveInteger(env.MAX_UPLOAD_BYTES, 5 * 1024 * 1024, "MAX_UPLOAD_BYTES"),
     oidcIssuer,

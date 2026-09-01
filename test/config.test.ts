@@ -3,7 +3,6 @@ import { loadConfig } from "../src/config";
 
 const validEnv = {
   APP_URL: "http://localhost:5173",
-  DATABASE_URL: "postgresql://profile:profile@localhost:5432/profile",
   OIDC_ISSUER: "https://auth.example.com/application/o/profile/",
   OIDC_CLIENT_ID: "profile",
   OIDC_CLIENT_SECRET: "client-secret",

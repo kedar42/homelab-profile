@@ -2,7 +2,7 @@
 
 Homelab Profile is a self-service account page for a homelab. Users sign in with Authentik, inspect the identity claims exposed to the application, and upload one normalized profile picture at a stable public endpoint. A lightweight development identity exercises the same local session and profile flow without contacting Authentik.
 
-The repository is a verified `0.1.0` bootstrap: dependencies are exactly pinned in `bun.lock`, the database has a reviewed initial migration, formatting and linting are enforced with Biome, and CI runs type checks, tests, a production build, and Drizzle migration checks. Live Authentik and PostgreSQL integration still requires those external services.
+The repository is a verified `0.1.0` bootstrap: dependencies are exactly pinned in `bun.lock`, SQLite and PostgreSQL have reviewed initial migrations, formatting and linting are enforced with Biome, and CI runs type checks, tests, a production build, and both Drizzle migration checks. Live Authentik and PostgreSQL integration still requires those external services.
 
 > The framework is **Elysia**, not “Elysium.” The component library is **HeroUI v3**.
 
@@ -15,7 +15,7 @@ flowchart LR
     API[Elysia API on Bun\n:3000]
     Auth[Authentik OIDC provider]
     DevIdentity[Local development identity]
-    DB[(PostgreSQL)]
+    DB[(SQLite local / PostgreSQL production)]
     Files[(Persistent avatar storage)]
 
     Browser -->|Eden Treaty| API
@@ -23,7 +23,7 @@ flowchart LR
     Vite -->|/api /auth /avatars proxy| API
     API <-->|OIDC code flow + PKCE| Auth
     DevIdentity -. development entry only .-> API
-    API <-->|Drizzle ORM + Bun SQL| DB
+    API <-->|One repository + Bun SQL| DB
     API -->|Sharp-normalized WebP| Files
     API -->|production assets| Browser
 ```
@@ -40,7 +40,7 @@ In development, Vite serves the browser client on port `5173` and proxies applic
 | UI | React 19 + HeroUI v3 | Login and profile screens built from HeroUI compound components such as `Alert`, `Avatar`, `Button`, `Card`, `Chip`, and `Spinner`. |
 | Styling | Tailwind CSS 4 + HeroUI styles | Vite-native Tailwind integration, HeroUI tokens, and an application-specific stylesheet. |
 | Authentication | Authentik + `openid-client` 6 | OIDC discovery and authorization-code flow with PKCE, state, and nonce. |
-| Persistence | PostgreSQL + Drizzle ORM | Sessions, one-time OIDC transactions, and avatar metadata. |
+| Persistence | Bun SQL + SQLite/PostgreSQL + Drizzle Kit | One repository stores sessions, OIDC transactions, and avatar metadata. SQLite is the embedded local default; PostgreSQL is required in production. Drizzle owns dialect-specific schemas and migrations. |
 | Image pipeline | Sharp | Bounded decode, orientation, square crop, resize, and WebP re-encoding. |
 | Quality | Biome + TypeScript + Bun test | Formatting, linting, static types, route tests, configuration tests, and image tests. |
 
@@ -52,12 +52,12 @@ The dependency set was reviewed against current upstream documentation on 2026-0
 
 1. The client calls `GET /api/me`.
 2. An unauthenticated response displays the sign-in screen.
-3. `GET /login` discovers Authentik, creates PKCE/state/nonce values, and stores a hashed, ten-minute OIDC transaction in PostgreSQL.
+3. `GET /login` discovers Authentik, creates PKCE/state/nonce values, and stores a hashed, ten-minute OIDC transaction in the configured database.
 4. Authentik returns the authorization response to `GET /auth/callback`.
 5. The callback atomically consumes the transaction, verifies the response, creates a hashed local session, and sets an HttpOnly cookie.
 6. The browser is redirected only to `/`; arbitrary return URLs are not accepted.
 
-In lightweight development mode, `GET /login` skips only the OIDC exchange. It creates the same hashed PostgreSQL session from the explicitly configured local identity, after which profile reads, CSRF protection, uploads, storage, and logout use the production code paths.
+In lightweight development mode, `GET /login` skips only the OIDC exchange. It creates the same hashed database session from the explicitly configured local identity, after which profile reads, CSRF protection, uploads, storage, and logout use the production code paths.
 
 ### Avatar upload
 
@@ -65,7 +65,7 @@ In lightweight development mode, `GET /login` skips only the OIDC exchange. It c
 2. The client validates those advertised limits for immediate feedback; the server independently enforces them.
 3. `POST /api/profile/avatar` checks the session, CSRF token, rate limit, declared MIME type, decoded media type, size, and decoded pixel count.
 4. Sharp applies orientation, crops and resizes to `512 × 512`, and re-encodes to WebP.
-5. The file is atomically renamed into `AVATAR_DIR`, then its metadata is upserted in PostgreSQL. Database failure removes the new file; success removes the superseded file.
+5. The file is atomically renamed into `AVATAR_DIR`, then its metadata is upserted through the shared repository. Database failure removes the new file; success removes the superseded file.
 6. `GET /avatars/:publicId` serves the result with an ETag and public cache headers. The opaque UUID remains stable across username changes; the query-string version changes after each upload for cache busting.
 
 ### Authentik `picture` integration
@@ -84,7 +84,8 @@ This service does **not** modify Authentik users or claims. It returns and hosts
 │       ├── api.ts            # Eden Treaty client
 │       ├── main.tsx          # React entry
 │       └── styles.css        # Tailwind, HeroUI, and local styles
-├── drizzle/                  # Committed SQL migration and metadata
+├── drizzle/                  # PostgreSQL migration and metadata
+├── drizzle-sqlite/           # SQLite migration and metadata
 ├── src/
 │   ├── app.ts                # Elysia routes and composition
 │   ├── avatar.ts             # Image validation and normalization
@@ -93,12 +94,16 @@ This service does **not** modify Authentik users or claims. It returns and hosts
 │   ├── index.ts              # Production process entry
 │   ├── security.ts           # Tokens, hashing, and CSRF
 │   └── db/
-│       ├── repository.ts     # Injectable Drizzle repository
-│       └── schema.ts         # PostgreSQL schema
+│       ├── config.ts         # SQLite/PostgreSQL selection
+│       ├── migrate.ts        # Backend-selecting migration runner
+│       ├── repository.ts     # Single portable Bun SQL repository
+│       ├── schema.ts         # PostgreSQL migration schema
+│       └── sqlite-schema.ts  # SQLite migration schema
 ├── test/                     # Bun unit and route tests
 ├── biome.json                # Formatter/linter policy
 ├── bun.lock                  # Reproducible dependency graph
-├── drizzle.config.ts
+├── drizzle.config.ts         # PostgreSQL Drizzle Kit config
+├── drizzle-sqlite.config.ts  # SQLite Drizzle Kit config
 ├── package.json
 ├── tsconfig.json
 └── vite.config.ts
@@ -110,14 +115,13 @@ This service does **not** modify Authentik users or claims. It returns and hosts
 - `oidc_transactions` stores hashed, single-use callback state with PKCE verifier, state, nonce, and expiry.
 - `avatars` stores one current file per stable OIDC subject, addressed publicly by an independent UUID.
 
-Expired records are rejected during reads and pruned when a new login begins. The initial migration is committed at `drizzle/0000_silent_prism.sql`.
+Expired records are rejected during reads and pruned when a new login begins. PostgreSQL uses `drizzle/0000_silent_prism.sql`; SQLite uses `drizzle-sqlite/0000_simple_magus.sql`. The table and column contracts match, while backend-specific DDL stays confined to these migration schemas.
 
 ## Local development
 
 ### Prerequisites
 
 - Bun `1.3.14` or later in the Bun 1.x line
-- PostgreSQL
 - An Authentik OAuth2/OIDC application only when testing real OIDC mode
 
 Install exactly what is recorded in the lockfile:
@@ -125,7 +129,6 @@ Install exactly what is recorded in the lockfile:
 ```sh
 bun ci
 cp .env.example .env
-# Configure PostgreSQL. Local auth accepts the COOKIE_SECRET placeholder.
 bun run db:migrate
 bun run dev
 ```
@@ -158,7 +161,7 @@ DEV_AUTH_DISPLAY_NAME=Local Developer
 DEV_AUTH_EMAIL=developer@localhost
 ```
 
-Start the normal development servers and select **Use local developer**. No Authentik discovery, redirect, token exchange, or mock identity-provider deployment occurs. PostgreSQL is still required intentionally: local auth replaces only the external identity provider, so sessions, CSRF, avatar metadata, migrations, and storage remain representative.
+Start the normal development servers and select **Use local developer**. No Authentik discovery, redirect, token exchange, mock identity-provider deployment, or database server occurs. Bun opens `./data/profile.sqlite`; sessions, CSRF, avatar metadata, migrations, and storage still exercise the real repository contract.
 
 When local authentication is enabled, `src/dev.ts` replaces an absent or unchanged `COOKIE_SECRET=replace-me` value with a built-in development-only secret. An explicitly configured secret is always preserved. Real OIDC mode and production still reject the placeholder.
 
@@ -170,7 +173,9 @@ The bypass is wired only by `src/dev.ts`. `bun run start` calls a fail-closed gu
 | --- | --- | --- |
 | `APP_URL` | Browser-visible HTTP(S) origin, with no path/query/fragment | `http://localhost:5173` |
 | `PORT` | Elysia listen port | `3000` |
-| `DATABASE_URL` | PostgreSQL connection URL | `postgresql://profile:profile@localhost:5432/profile` |
+| `DATABASE_DRIVER` | `sqlite` locally or `postgres` explicitly | `sqlite` |
+| `SQLITE_DATABASE_PATH` | Embedded SQLite file | `./data/profile.sqlite` |
+| `DATABASE_URL` | Required only with the PostgreSQL driver | unset locally |
 | `AVATAR_DIR` | Persistent avatar directory | `./data/avatars` |
 | `MAX_UPLOAD_BYTES` | Maximum source upload size | `5242880` |
 | `DEV_AUTH_ENABLED` | Use a local identity through the development entry only | `true` in `.env.example` |
@@ -203,9 +208,11 @@ The OIDC configuration assumes Authentik's recommended per-provider issuer mode 
 | `bun test` | Run the Bun test suite. |
 | `bun run build` | Build `client/dist`. |
 | `bun run check` | Run quality, types, tests, and the production build. |
-| `bun run db:generate` | Generate SQL after an intentional schema change. |
-| `bun run db:migrate` | Apply committed migrations. |
-| `bun run db:check` | Check generated migration history for collisions. |
+| `bun run db:generate` | Generate both PostgreSQL and SQLite SQL after an intentional schema change. |
+| `bun run db:generate:postgres` | Generate only the PostgreSQL migration history. |
+| `bun run db:generate:sqlite` | Generate only the SQLite migration history. |
+| `bun run db:migrate` | Apply migrations selected by `DATABASE_DRIVER`. |
+| `bun run db:check` | Check both generated migration histories for collisions. |
 
 Schema changes follow Drizzle's code-first `generate` → review SQL → `migrate` workflow. Do not use `db:push` for shared or production environments.
 
@@ -214,6 +221,9 @@ Schema changes follow Drizzle's code-first `generate` → review SQL → `migrat
 ```sh
 bun ci
 bun run check
+export DATABASE_DRIVER=postgres
+export DATABASE_URL=postgresql://profile:profile@database:5432/profile
+export DEV_AUTH_ENABLED=false
 bun run db:migrate
 bun run start
 ```
@@ -237,7 +247,7 @@ Run the migration as an explicit release step before starting the new applicatio
 - The upload/login limiter is in-memory and per process. Authenticated uploads key by hashed session; unauthenticated requests use the direct connection address. Multi-replica deployment needs a shared limiter, and trusted-proxy client-IP handling must match the deployment topology.
 - Avatar files live on the local filesystem. Multiple replicas need shared storage or an object-store adapter.
 - Simultaneous uploads for the same subject can leave a superseded file behind. Metadata remains correct, but production at scale should serialize replacements per subject or run an idempotent orphan cleanup job.
-- The automated suite uses an injected repository; a live PostgreSQL migration test and full Authentik browser flow belong in environment-level integration tests.
+- The automated suite migrates and exercises a real SQLite file. A live PostgreSQL migration test and full Authentik browser flow belong in environment-level integration tests.
 - No container image is prescribed because storage, proxy, and migration orchestration are deployment-specific. The documented Bun release sequence is the supported runtime contract.
 
 ## Upstream references
@@ -250,6 +260,8 @@ Run the migration as an explicit release step before starting the new applicatio
 - [HeroUI React quick start](https://heroui.com/docs/react/getting-started/quick-start)
 - [Tailwind CSS with Vite](https://tailwindcss.com/docs/installation/using-vite)
 - [Drizzle Kit migrations](https://orm.drizzle.team/docs/kit-overview)
+- [Drizzle with Bun SQLite](https://orm.drizzle.team/docs/get-started/bun-sqlite-new)
+- [Bun SQLite](https://bun.sh/docs/runtime/sqlite)
 - [`openid-client` API](https://github.com/panva/openid-client/blob/main/docs/README.md)
 - [Authentik OAuth2/OIDC provider](https://docs.goauthentik.io/add-secure-apps/providers/oauth2)
 - [Authentik property mappings](https://docs.goauthentik.io/add-secure-apps/providers/property-mappings/)

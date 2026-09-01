@@ -19,9 +19,11 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "check": "bun run quality && bun run typecheck && bun test && bun run build",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:check": "drizzle-kit check"
+    "db:generate": "bun run db:generate:postgres && bun run db:generate:sqlite",
+    "db:generate:postgres": "drizzle-kit generate --config=drizzle.config.ts",
+    "db:generate:sqlite": "drizzle-kit generate --config=drizzle-sqlite.config.ts",
+    "db:migrate": "bun src/db/migrate.ts",
+    "db:check": "drizzle-kit check --config=drizzle.config.ts && drizzle-kit check --config=drizzle-sqlite.config.ts"
   },
   "dependencies": {
     "@elysia/eden": "1.4.10",
@@ -47,7 +49,6 @@
     "@vitejs/plugin-react": "6.1.1",
     "concurrently": "10.0.5",
     "drizzle-kit": "0.31.10",
-    "pg": "8.23.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.2.2"

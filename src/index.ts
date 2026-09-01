@@ -1,11 +1,14 @@
 import { addWebClient, createApp } from "./app";
 import { loadConfig } from "./config";
+import { assertProductionDatabase, loadDatabaseConfig } from "./db/config";
 import { createProfileRepository } from "./db/repository";
 import { assertDevelopmentAuthDisabled } from "./development-auth";
 
 assertDevelopmentAuthDisabled();
 const config = loadConfig();
-const repository = createProfileRepository(config.databaseUrl);
+const databaseConfig = loadDatabaseConfig();
+assertProductionDatabase(databaseConfig);
+const repository = createProfileRepository(databaseConfig);
 const app = await addWebClient(createApp({ config, repository }));
 
 app.listen({ port: config.port, hostname: "0.0.0.0" });

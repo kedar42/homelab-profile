@@ -5,14 +5,12 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { createApp } from "../src/app";
 import type { AppConfig } from "../src/config";
-import type { ProfileRepository } from "../src/db/repository";
-import type { SessionRecord } from "../src/db/schema";
+import type { ProfileRepository, SessionRecord } from "../src/db/repository";
 import { csrfToken, hashToken } from "../src/security";
 
 const config: AppConfig = {
   appUrl: new URL("https://profile.example.com"),
   port: 3000,
-  databaseUrl: "postgresql://unused",
   avatarDir: "/tmp/profile-app-test-avatars",
   maxUploadBytes: 5 * 1024 * 1024,
   oidcIssuer: new URL("https://auth.example.com/application/o/profile/"),
