@@ -236,13 +236,6 @@ input {
   background: #c691df;
 }
 
-.status-alert {
-  width: 100%;
-  margin-bottom: 16px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-}
-
 .profile-card-content {
   padding: 34px;
 }
@@ -252,9 +245,6 @@ input {
   align-items: center;
   gap: 24px;
   min-width: 0;
-}
-
-.profile-summary.has-pending-avatar {
   padding-bottom: 28px;
   border-bottom: 1px solid var(--line);
 }
@@ -336,6 +326,44 @@ input {
   white-space: nowrap;
 }
 
+.security-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 22px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--line);
+}
+
+.security-summary div {
+  min-width: 0;
+  padding: 13px 14px;
+  background: #0d110f;
+}
+
+.security-summary span,
+.security-summary b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.security-summary span {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.security-summary b {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .save-row {
   display: flex;
   align-items: center;
@@ -356,6 +384,11 @@ input {
 .save-button {
   flex: none;
   min-width: 140px;
+}
+
+.save-button[data-disabled] {
+  color: var(--muted);
+  background: var(--surface-hover);
 }
 
 @media (max-width: 560px) {
@@ -401,6 +434,10 @@ input {
     align-items: stretch;
     flex-direction: column;
     gap: 12px;
+  }
+
+  .security-summary {
+    grid-template-columns: 1fr;
   }
 
   .save-button {

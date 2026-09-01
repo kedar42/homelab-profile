@@ -103,6 +103,8 @@ describe("profile API", () => {
         username: "developer",
         displayName: "Local Developer",
         email: "developer@localhost",
+        emailVerified: true,
+        authenticationMethods: [],
         pictureUrl: null,
       },
       repository: repository({
@@ -135,6 +137,8 @@ describe("profile API", () => {
         username: "developer",
         displayName: "Local Developer",
         email: "developer@localhost",
+        emailVerified: true,
+        authenticationMethods: [],
         pictureUrl: null,
       },
     }).handle(new Request("https://profile.example.com/api/auth/mode"));
@@ -166,6 +170,8 @@ describe("profile API", () => {
             username: "kedar",
             displayName: "Kedar",
             email: "kedar@example.com",
+            emailVerified: true,
+            authenticationMethods: ["pwd", "mfa"],
             pictureUrl: "https://auth.example.com/media/avatar.png",
             expiresAt: new Date(Date.now() + 60_000),
           };
@@ -186,6 +192,10 @@ describe("profile API", () => {
         email: "kedar@example.com",
       },
       avatarUrl: "https://auth.example.com/media/avatar.png",
+      security: {
+        emailVerified: true,
+        authenticationMethods: ["pwd", "mfa"],
+      },
       maxUploadBytes: 5 * 1024 * 1024,
       acceptedImageTypes: ["image/jpeg", "image/png", "image/webp", "image/avif"],
     });
@@ -206,6 +216,8 @@ describe("profile API", () => {
             username: "renamed-user",
             displayName: "Kedar",
             email: "kedar@example.com",
+            emailVerified: null,
+            authenticationMethods: [],
             pictureUrl: null,
             expiresAt: new Date(Date.now() + 60_000),
           };
@@ -261,6 +273,8 @@ describe("profile API", () => {
               username: "kedar",
               displayName: "Kedar",
               email: "kedar@example.com",
+              emailVerified: null,
+              authenticationMethods: [],
               pictureUrl: null,
               expiresAt: new Date(Date.now() + 60_000),
             };

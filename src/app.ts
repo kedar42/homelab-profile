@@ -39,6 +39,11 @@ function publicAvatarUrl(config: AppConfig, publicId: string, version: string): 
   return url.href;
 }
 
+function stringArrayClaim(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
 const errorModel = t.Object({ error: t.String() });
 const cookieModel = t.Cookie({
   profile_session: t.Optional(t.String()),
@@ -50,6 +55,11 @@ const profileModel = t.Object({
     username: t.String(),
     displayName: t.String(),
     email: t.String(),
+  }),
+  security: t.Object({
+    emailVerified: t.Nullable(t.Boolean()),
+    authenticationMethods: t.Array(t.String()),
+    sessionExpiresAt: t.String({ format: "date-time" }),
   }),
   avatarUrl: t.Nullable(t.String()),
   csrfToken: t.String(),
@@ -250,6 +260,9 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
           const displayName =
             typeof claims.name === "string" && claims.name.trim() ? claims.name : username;
           const email = typeof claims.email === "string" ? claims.email : "Not provided";
+          const emailVerified =
+            typeof claims.email_verified === "boolean" ? claims.email_verified : null;
+          const authenticationMethods = stringArrayClaim(claims.amr);
           const pictureUrl = typeof claims.picture === "string" ? claims.picture : null;
           const sessionId = randomToken();
           const expiresAt = new Date(Date.now() + config.sessionTtlDays * 24 * 60 * 60_000);
@@ -260,6 +273,8 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
             username,
             displayName,
             email,
+            emailVerified,
+            authenticationMethods,
             pictureUrl,
             expiresAt,
           });
@@ -300,6 +315,11 @@ export function createApp({ config, repository, developmentIdentity }: AppDepend
                 username: session.record.username,
                 displayName: session.record.displayName,
                 email: session.record.email,
+              },
+              security: {
+                emailVerified: session.record.emailVerified,
+                authenticationMethods: session.record.authenticationMethods,
+                sessionExpiresAt: session.record.expiresAt.toISOString(),
               },
               avatarUrl: avatar
                 ? publicAvatarUrl(config, avatar.publicId, avatar.version)

@@ -1,5 +1,5 @@
 import { ArrowRight, ArrowRightFromSquare, CircleInfo, Pencil, Person } from "@gravity-ui/icons";
-import { Alert, Avatar, Button, Card, Spinner } from "@heroui/react";
+import { Avatar, Button, Card, Spinner, toast } from "@heroui/react";
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
@@ -76,28 +76,11 @@ function LoginScreen({ authenticationMode }: { authenticationMode: Authenticatio
   );
 }
 
-function StatusAlert({ kind, message }: { kind: "success" | "danger"; message: string }) {
-  return (
-    <Alert status={kind} className="status-alert">
-      <Alert.Indicator />
-      <Alert.Content>
-        <Alert.Title>
-          {kind === "success" ? "Profile picture updated" : "Upload failed"}
-        </Alert.Title>
-        <Alert.Description>{message}</Alert.Description>
-      </Alert.Content>
-    </Alert>
-  );
-}
-
 function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) {
   const [profile, setProfile] = useState(initialProfile);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [notice, setNotice] = useState<{ kind: "success" | "danger"; message: string } | null>(
-    null,
-  );
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(
@@ -115,7 +98,7 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
         setFile(null);
         setPreviewUrl(null);
         if (inputRef.current) inputRef.current.value = "";
-        setNotice({ kind: "danger", message });
+        toast.danger("Image not selected", { description: message });
       };
       if (nextFile.size === 0) {
         rejectFile("Choose a non-empty image to upload.");
@@ -133,7 +116,6 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setFile(nextFile);
       setPreviewUrl(URL.createObjectURL(nextFile));
-      setNotice(null);
     },
     [previewUrl, profile.acceptedImageTypes, profile.maxUploadBytes],
   );
@@ -145,7 +127,6 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
   async function saveAvatar() {
     if (!file) return;
     setIsSaving(true);
-    setNotice(null);
     try {
       const { data, error } = await api.api.profile.avatar.post({
         avatar: file,
@@ -156,14 +137,13 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
       setFile(null);
       setPreviewUrl(null);
       if (inputRef.current) inputRef.current.value = "";
-      setNotice({
-        kind: "success",
-        message: "Your new image is now available at your public profile URL.",
+      toast("Profile picture updated", {
+        variant: "accent",
+        description: "Your new image is now available at your public profile URL.",
       });
     } catch (error) {
-      setNotice({
-        kind: "danger",
-        message: error instanceof Error ? error.message : "Please try again.",
+      toast.danger("Upload failed", {
+        description: error instanceof Error ? error.message : "Please try again.",
       });
     } finally {
       setIsSaving(false);
@@ -183,6 +163,19 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
     .slice(0, 2)
     .toUpperCase();
   const currentImage = previewUrl || profile.avatarUrl || undefined;
+  const methods = profile.security.authenticationMethods.map((method) => method.toLowerCase());
+  const usedMfa = methods.some((method) => ["mfa", "otp", "sms", "hwk", "swk"].includes(method));
+  const mfaStatus = methods.length === 0 ? "Not reported" : usedMfa ? "Used" : "Not used";
+  const emailStatus =
+    profile.security.emailVerified === null
+      ? "Not reported"
+      : profile.security.emailVerified
+        ? "Verified"
+        : "Not verified";
+  const sessionExpiry = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(profile.security.sessionExpiresAt));
 
   return (
     <main className="app-page">
@@ -195,7 +188,6 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
 
       <div className="profile-content">
         <section aria-labelledby="profile-title">
-          {notice && <StatusAlert kind={notice.kind} message={notice.message} />}
           <Card className="profile-card" variant="secondary">
             <Card.Content className="profile-card-content">
               <input
@@ -205,7 +197,7 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
                 accept={profile.acceptedImageTypes.join(",")}
                 onChange={onFileChange}
               />
-              <div className={`profile-summary ${file ? "has-pending-avatar" : ""}`}>
+              <div className="profile-summary">
                 <Button
                   className="avatar-button"
                   variant="ghost"
@@ -231,14 +223,31 @@ function ProfileScreen({ initialProfile }: { initialProfile: ProfileResponse }) 
                   <p>{profile.user.email}</p>
                 </div>
               </div>
-              {file && (
-                <div className="save-row">
-                  <span title={file.name}>{file.name}</span>
-                  <Button className="save-button" isPending={isSaving} onPress={saveAvatar}>
-                    {isSaving ? "Saving" : "Save changes"}
-                  </Button>
+              <section className="security-summary" aria-label="Account security">
+                <div>
+                  <span>Email</span>
+                  <b>{emailStatus}</b>
                 </div>
-              )}
+                <div title="Methods used for this sign-in; this does not indicate factor enrollment.">
+                  <span>MFA this sign-in</span>
+                  <b>{mfaStatus}</b>
+                </div>
+                <div>
+                  <span>Session expires</span>
+                  <b>{sessionExpiry}</b>
+                </div>
+              </section>
+              <div className="save-row">
+                <span title={file?.name}>{file?.name || "No pending changes"}</span>
+                <Button
+                  className="save-button"
+                  isDisabled={!file}
+                  isPending={isSaving}
+                  onPress={saveAvatar}
+                >
+                  {isSaving ? "Saving" : "Save changes"}
+                </Button>
+              </div>
             </Card.Content>
           </Card>
         </section>

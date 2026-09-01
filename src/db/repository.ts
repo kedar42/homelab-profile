@@ -17,6 +17,8 @@ export interface SessionRecord {
   username: string;
   displayName: string;
   email: string;
+  emailVerified: boolean | null;
+  authenticationMethods: string[];
   pictureUrl: string | null;
   expiresAt: Date;
 }
@@ -57,6 +59,8 @@ interface SessionRow {
   username: string;
   display_name: string;
   email: string;
+  email_verified: boolean | number | null;
+  authentication_methods: string;
   picture_url: string | null;
   expires_at: Date | string;
 }
@@ -84,12 +88,24 @@ function avatarRecord(row: AvatarRow): AvatarRecord {
 }
 
 function sessionRecord(row: SessionRow): SessionRecord {
+  let authenticationMethods: string[] = [];
+  try {
+    const stored = JSON.parse(row.authentication_methods);
+    if (Array.isArray(stored)) {
+      authenticationMethods = stored.filter((value): value is string => typeof value === "string");
+    }
+  } catch {
+    // Treat invalid legacy metadata as unavailable rather than failing the session.
+  }
   return {
     idHash: row.id_hash,
     subject: row.subject,
     username: row.username,
     displayName: row.display_name,
     email: row.email,
+    emailVerified:
+      row.email_verified === null ? null : row.email_verified === true || row.email_verified === 1,
+    authenticationMethods,
     pictureUrl: row.picture_url,
     expiresAt: asDate(row.expires_at),
   };
@@ -137,14 +153,17 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
     async createSession(record) {
       await query(
         `insert into sessions
-          (id_hash, subject, username, display_name, email, picture_url, expires_at)
-         values ($1, $2, $3, $4, $5, $6, $7)`,
+          (id_hash, subject, username, display_name, email, email_verified,
+           authentication_methods, picture_url, expires_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           record.idHash,
           record.subject,
           record.username,
           record.displayName,
           record.email,
+          record.emailVerified,
+          JSON.stringify(record.authenticationMethods),
           record.pictureUrl,
           record.expiresAt.toISOString(),
         ],
@@ -152,7 +171,8 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
     },
     async findSession(idHash, now = new Date()) {
       const [row] = await query<SessionRow>(
-        `select id_hash, subject, username, display_name, email, picture_url, expires_at
+        `select id_hash, subject, username, display_name, email, email_verified,
+                authentication_methods, picture_url, expires_at
          from sessions where id_hash = $1 and expires_at > $2 limit 1`,
         [idHash, now.toISOString()],
       );

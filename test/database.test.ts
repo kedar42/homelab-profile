@@ -50,12 +50,16 @@ describe("SQLite profile repository", () => {
         username: "developer",
         displayName: "Local Developer",
         email: "developer@localhost",
+        emailVerified: true,
+        authenticationMethods: ["pwd", "mfa"],
         pictureUrl: null,
         expiresAt: new Date(now.getTime() + 60_000),
       });
       expect(await repository.findSession("session-hash", now)).toMatchObject({
         subject: "subject-1",
         username: "developer",
+        emailVerified: true,
+        authenticationMethods: ["pwd", "mfa"],
       });
 
       await repository.createOidcTransaction({

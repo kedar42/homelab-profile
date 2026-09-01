@@ -1,4 +1,4 @@
-import { index, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const avatars = sqliteTable("avatars", {
   subject: text("subject").primaryKey(),
@@ -16,6 +16,8 @@ export const sessions = sqliteTable(
     username: text("username").notNull(),
     displayName: text("display_name").notNull(),
     email: text("email").notNull(),
+    emailVerified: integer("email_verified", { mode: "boolean" }),
+    authenticationMethods: text("authentication_methods").notNull().default("[]"),
     pictureUrl: text("picture_url"),
     expiresAt: text("expires_at").notNull(),
   },

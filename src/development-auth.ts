@@ -3,6 +3,8 @@ export interface DevelopmentIdentity {
   username: string;
   displayName: string;
   email: string;
+  emailVerified: boolean;
+  authenticationMethods: string[];
   pictureUrl: string | null;
 }
 
@@ -43,6 +45,8 @@ export function loadDevelopmentIdentity(
     username: valueOrDefault(env, "DEV_AUTH_USERNAME", "developer"),
     displayName: valueOrDefault(env, "DEV_AUTH_DISPLAY_NAME", "Local Developer"),
     email: valueOrDefault(env, "DEV_AUTH_EMAIL", "developer@localhost"),
+    emailVerified: true,
+    authenticationMethods: [],
     pictureUrl,
   };
 }

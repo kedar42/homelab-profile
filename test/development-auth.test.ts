@@ -13,6 +13,8 @@ describe("development authentication configuration", () => {
       username: "developer",
       displayName: "Local Developer",
       email: "developer@localhost",
+      emailVerified: true,
+      authenticationMethods: [],
       pictureUrl: null,
     });
   });

@@ -59,6 +59,8 @@ The dependency set was reviewed against current upstream documentation on 2026-0
 
 In lightweight development mode, `GET /login` skips only the OIDC exchange. It creates the same hashed database session from the explicitly configured local identity, after which profile reads, CSRF protection, uploads, storage, and logout use the production code paths.
 
+The compact security summary shows the OIDC `email_verified` claim, the authentication methods (`amr`) used for the current sign-in, and local session expiry. Authentication methods are evidence about this login, not proof that a second factor is enrolled on the account; absent claims are shown as “Not reported” rather than guessed.
+
 ### Avatar upload
 
 1. `GET /api/me` returns the authenticated profile, an HMAC-derived CSRF token, and the server's accepted MIME types and byte limit.
@@ -111,11 +113,11 @@ This service does **not** modify Authentik users or claims. It returns and hosts
 
 ## Data model
 
-- `sessions` stores hashed local session IDs, Authentik identity claims, and expiry times.
+- `sessions` stores hashed local session IDs, essential Authentik identity and sign-in-security claims, and expiry times.
 - `oidc_transactions` stores hashed, single-use callback state with PKCE verifier, state, nonce, and expiry.
 - `avatars` stores one current file per stable OIDC subject, addressed publicly by an independent UUID.
 
-Expired records are rejected during reads and pruned when a new login begins. PostgreSQL uses `drizzle/0000_silent_prism.sql`; SQLite uses `drizzle-sqlite/0000_simple_magus.sql`. The table and column contracts match, while backend-specific DDL stays confined to these migration schemas.
+Expired records are rejected during reads and pruned when a new login begins. PostgreSQL and SQLite migration histories live in `drizzle/` and `drizzle-sqlite/` respectively. Their table and column contracts match, while backend-specific DDL stays confined to these migration schemas.
 
 ## Local development
 
