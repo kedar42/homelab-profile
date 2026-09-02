@@ -1,4 +1,4 @@
-import { boolean, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 export const avatars = pgTable("avatars", {
   subject: text("subject").primaryKey(),
@@ -6,6 +6,7 @@ export const avatars = pgTable("avatars", {
   filename: text("filename").notNull(),
   version: uuid("version").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  authentikLinkedAt: timestamp("authentik_linked_at", { withTimezone: true, mode: "date" }),
 });
 
 export const sessions = pgTable(
@@ -19,7 +20,7 @@ export const sessions = pgTable(
     emailVerified: boolean("email_verified"),
     authenticationMethods: text("authentication_methods").notNull().default("[]"),
     pictureUrl: text("picture_url"),
-    delegatedCredentials: text("delegated_credentials"),
+    authentikUserPk: integer("authentik_user_pk"),
     expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
   },
   (table) => [index("sessions_expires_at_idx").on(table.expiresAt)],

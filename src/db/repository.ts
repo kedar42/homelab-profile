@@ -9,6 +9,7 @@ export interface AvatarRecord {
   filename: string;
   version: string;
   updatedAt: Date;
+  authentikLinkedAt: Date | null;
 }
 
 export interface SessionRecord {
@@ -20,7 +21,7 @@ export interface SessionRecord {
   emailVerified: boolean | null;
   authenticationMethods: string[];
   pictureUrl: string | null;
-  delegatedCredentials: string | null;
+  authentikUserPk: number | null;
   expiresAt: Date;
 }
 
@@ -37,12 +38,13 @@ export interface ProfileRepository {
   createSession(record: SessionRecord): Promise<void>;
   findSession(idHash: string, now?: Date): Promise<SessionRecord | null>;
   deleteSession(idHash: string): Promise<void>;
-  updateSessionCredentials(idHash: string, delegatedCredentials: string): Promise<void>;
   createOidcTransaction(record: OidcTransactionRecord): Promise<void>;
   consumeOidcTransaction(idHash: string, now?: Date): Promise<OidcTransactionRecord | null>;
   findAvatarBySubject(subject: string): Promise<AvatarRecord | null>;
   findAvatarByPublicId(publicId: string): Promise<AvatarRecord | null>;
   upsertAvatar(record: AvatarRecord): Promise<AvatarRecord>;
+  markAvatarLinked(subject: string, linkedAt: Date): Promise<void>;
+  deleteAvatar(subject: string): Promise<void>;
   deleteExpired(now?: Date): Promise<void>;
   close(): Promise<void>;
 }
@@ -53,6 +55,7 @@ interface AvatarRow {
   filename: string;
   version: string;
   updated_at: Date | string;
+  authentik_linked_at: Date | string | null;
 }
 
 interface SessionRow {
@@ -64,7 +67,7 @@ interface SessionRow {
   email_verified: boolean | number | null;
   authentication_methods: string;
   picture_url: string | null;
-  delegated_credentials: string | null;
+  authentik_user_pk: number | null;
   expires_at: Date | string;
 }
 
@@ -87,6 +90,7 @@ function avatarRecord(row: AvatarRow): AvatarRecord {
     filename: row.filename,
     version: row.version,
     updatedAt: asDate(row.updated_at),
+    authentikLinkedAt: row.authentik_linked_at ? asDate(row.authentik_linked_at) : null,
   };
 }
 
@@ -110,7 +114,7 @@ function sessionRecord(row: SessionRow): SessionRecord {
       row.email_verified === null ? null : row.email_verified === true || row.email_verified === 1,
     authenticationMethods,
     pictureUrl: row.picture_url,
-    delegatedCredentials: row.delegated_credentials,
+    authentikUserPk: row.authentik_user_pk,
     expiresAt: asDate(row.expires_at),
   };
 }
@@ -158,7 +162,7 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
       await query(
         `insert into sessions
           (id_hash, subject, username, display_name, email, email_verified,
-           authentication_methods, picture_url, delegated_credentials, expires_at)
+           authentication_methods, picture_url, authentik_user_pk, expires_at)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           record.idHash,
@@ -169,7 +173,7 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
           record.emailVerified,
           JSON.stringify(record.authenticationMethods),
           record.pictureUrl,
-          record.delegatedCredentials,
+          record.authentikUserPk,
           record.expiresAt.toISOString(),
         ],
       );
@@ -177,7 +181,7 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
     async findSession(idHash, now = new Date()) {
       const [row] = await query<SessionRow>(
         `select id_hash, subject, username, display_name, email, email_verified,
-                authentication_methods, picture_url, delegated_credentials, expires_at
+                authentication_methods, picture_url, authentik_user_pk, expires_at
          from sessions where id_hash = $1 and expires_at > $2 limit 1`,
         [idHash, now.toISOString()],
       );
@@ -185,12 +189,6 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
     },
     async deleteSession(idHash) {
       await query("delete from sessions where id_hash = $1", [idHash]);
-    },
-    async updateSessionCredentials(idHash, delegatedCredentials) {
-      await query("update sessions set delegated_credentials = $1 where id_hash = $2", [
-        delegatedCredentials,
-        idHash,
-      ]);
     },
     async createOidcTransaction(record) {
       await query(
@@ -216,7 +214,7 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
     },
     async findAvatarBySubject(subject) {
       const [row] = await query<AvatarRow>(
-        `select subject, public_id, filename, version, updated_at
+        `select subject, public_id, filename, version, updated_at, authentik_linked_at
          from avatars where subject = $1 limit 1`,
         [subject],
       );
@@ -224,7 +222,7 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
     },
     async findAvatarByPublicId(publicId) {
       const [row] = await query<AvatarRow>(
-        `select subject, public_id, filename, version, updated_at
+        `select subject, public_id, filename, version, updated_at, authentik_linked_at
          from avatars where public_id = $1 limit 1`,
         [publicId],
       );
@@ -232,23 +230,35 @@ export function createProfileRepository(config: DatabaseConfig): ProfileReposito
     },
     async upsertAvatar(record) {
       const [row] = await query<AvatarRow>(
-        `insert into avatars (subject, public_id, filename, version, updated_at)
-         values ($1, $2, $3, $4, $5)
+        `insert into avatars
+          (subject, public_id, filename, version, updated_at, authentik_linked_at)
+         values ($1, $2, $3, $4, $5, $6)
          on conflict (subject) do update set
            filename = excluded.filename,
            version = excluded.version,
-           updated_at = excluded.updated_at
-         returning subject, public_id, filename, version, updated_at`,
+           updated_at = excluded.updated_at,
+           authentik_linked_at = excluded.authentik_linked_at
+         returning subject, public_id, filename, version, updated_at, authentik_linked_at`,
         [
           record.subject,
           record.publicId,
           record.filename,
           record.version,
           record.updatedAt.toISOString(),
+          record.authentikLinkedAt?.toISOString() ?? null,
         ],
       );
       if (!row) throw new Error("Avatar metadata was not persisted");
       return avatarRecord(row);
+    },
+    async markAvatarLinked(subject, linkedAt) {
+      await query("update avatars set authentik_linked_at = $1 where subject = $2", [
+        linkedAt.toISOString(),
+        subject,
+      ]);
+    },
+    async deleteAvatar(subject) {
+      await query("delete from avatars where subject = $1", [subject]);
     },
     async deleteExpired(now = new Date()) {
       const threshold = now.toISOString();

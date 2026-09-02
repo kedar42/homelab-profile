@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { loadConfig } from "../src/config";
+import { assertAuthentikServiceCredential, loadConfig } from "../src/config";
 
 const validEnv = {
   APP_URL: "http://localhost:5173",
@@ -19,11 +19,24 @@ describe("loadConfig", () => {
     expect(config.sessionTtlDays).toBe(7);
     expect(config.secureCookies).toBe(false);
     expect(config.avatarDir.endsWith("/data/avatars")).toBe(true);
+    expect(config.authentikServiceTokenFile).toBeNull();
   });
 
   test("uses secure cookies for HTTPS origins", () => {
-    const config = loadConfig({ ...validEnv, APP_URL: "https://profile.example.com" });
+    const config = loadConfig({
+      ...validEnv,
+      APP_URL: "https://profile.example.com",
+      AUTHENTIK_SERVICE_TOKEN_FILE: "./secrets/authentik-token",
+    });
     expect(config.secureCookies).toBe(true);
+    expect(config.authentikServiceTokenFile?.endsWith("/secrets/authentik-token")).toBe(true);
+    expect(() => assertAuthentikServiceCredential(config)).not.toThrow();
+  });
+
+  test("requires the backend service credential in production", () => {
+    expect(() => assertAuthentikServiceCredential(loadConfig(validEnv))).toThrow(
+      "Production requires AUTHENTIK_SERVICE_TOKEN_FILE",
+    );
   });
 
   test("rejects origins with a path", () => {

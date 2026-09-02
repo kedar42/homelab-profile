@@ -22,6 +22,13 @@
       "when": 1788266458510,
       "tag": "0002_flowery_ronan",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788270696524,
+      "tag": "0003_lumpy_scalphunter",
+      "breakpoints": true
     }
   ]
 }

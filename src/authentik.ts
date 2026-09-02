@@ -1,20 +1,25 @@
-import * as oidc from "openid-client";
-import type { DelegatedCredentials } from "./security";
+import { readFile } from "node:fs/promises";
 
-const REQUIRED_SCOPES = "openid profile email goauthentik.io/api offline_access";
+export const AUTHENTIK_OIDC_SCOPES = "openid profile email";
 
-export class AuthentikUserApiError extends Error {}
+export class AuthentikAvatarServiceError extends Error {}
 
-export interface AuthentikUserApi {
-  setOwnAvatar(credentials: DelegatedCredentials, avatarUrl: string): Promise<DelegatedCredentials>;
-  revoke(credentials: DelegatedCredentials): Promise<void>;
+export function authentikUserPkClaim(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new Error("OIDC response did not contain a valid authentik_user_pk claim");
+  }
+  return value as number;
 }
 
-interface AuthentikUserApiOptions {
+export interface AuthentikAvatarService {
+  linkAvatar(authentikUserPk: number, avatarUrl: string): Promise<void>;
+}
+
+interface AuthentikAvatarServiceOptions {
   issuer: URL;
-  getConfiguration(): Promise<oidc.Configuration>;
+  tokenFile?: string;
+  getToken?: () => Promise<string>;
   fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
-  now?: () => number;
 }
 
 function apiUrl(issuer: URL, path: string): URL {
@@ -24,101 +29,75 @@ function apiUrl(issuer: URL, path: string): URL {
   return new URL(`${prefix}/api/v3/${path.replace(/^\//, "")}`, issuer.origin);
 }
 
-function tokenExpiry(
-  tokens: oidc.TokenEndpointResponse & oidc.TokenEndpointResponseHelpers,
-): number {
-  const expiresIn = tokens.expiresIn();
-  if (expiresIn === undefined) {
-    throw new AuthentikUserApiError("Authentik did not report an access-token lifetime.");
-  }
-  return Date.now() + expiresIn * 1_000;
+function isAttributes(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function delegatedCredentialsFromTokens(
-  tokens: oidc.TokenEndpointResponse & oidc.TokenEndpointResponseHelpers,
-): DelegatedCredentials {
-  if (!tokens.access_token || !tokens.refresh_token) {
-    throw new AuthentikUserApiError(
-      "Authentik did not grant delegated API and offline access. Check the provider scopes.",
-    );
-  }
-  return {
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    accessTokenExpiresAt: tokenExpiry(tokens),
-  };
-}
-
-export function createAuthentikUserApi({
+export function createAuthentikAvatarService({
   issuer,
-  getConfiguration,
+  tokenFile,
+  getToken,
   fetch: fetchRequest = fetch,
-  now = Date.now,
-}: AuthentikUserApiOptions): AuthentikUserApi {
-  async function freshCredentials(
-    credentials: DelegatedCredentials,
-  ): Promise<DelegatedCredentials> {
-    if (credentials.accessTokenExpiresAt > now() + 30_000) return credentials;
-    const tokens = await oidc.refreshTokenGrant(await getConfiguration(), credentials.refreshToken);
-    if (!tokens.access_token) {
-      throw new AuthentikUserApiError("Authentik did not return a refreshed access token.");
-    }
-    return {
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token ?? credentials.refreshToken,
-      accessTokenExpiresAt: tokenExpiry(tokens),
-    };
-  }
+}: AuthentikAvatarServiceOptions): AuthentikAvatarService {
+  const loadToken =
+    getToken ??
+    (async () => {
+      if (!tokenFile) throw new AuthentikAvatarServiceError("Service credential is unavailable.");
+      const token = (await readFile(tokenFile, "utf8")).trim();
+      if (!token) throw new AuthentikAvatarServiceError("Service credential is empty.");
+      return token;
+    });
 
-  async function apiRequest(url: URL, accessToken: string, init?: RequestInit): Promise<Response> {
+  async function apiRequest(url: URL, token: string, init?: RequestInit): Promise<Response> {
     const response = await fetchRequest(url, {
       ...init,
       headers: {
         accept: "application/json",
-        authorization: `Bearer ${accessToken}`,
+        authorization: `Bearer ${token}`,
         ...init?.headers,
       },
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      throw new AuthentikUserApiError(
-        `Authentik rejected the delegated profile update (${response.status}).`,
+      throw new AuthentikAvatarServiceError(
+        `Authentik rejected the avatar link operation (${response.status}).`,
       );
     }
     return response;
   }
 
   return {
-    async setOwnAvatar(credentials, avatarUrl) {
-      const current = await freshCredentials(credentials);
-      const me = await apiRequest(apiUrl(issuer, "core/users/me/"), current.accessToken);
-      const payload: unknown = await me.json();
-      const pk =
-        payload &&
-        typeof payload === "object" &&
-        "user" in payload &&
-        payload.user &&
-        typeof payload.user === "object" &&
-        "pk" in payload.user
-          ? payload.user.pk
-          : undefined;
-      if (typeof pk !== "number" || !Number.isSafeInteger(pk) || pk <= 0) {
-        throw new AuthentikUserApiError("Authentik did not identify the signed-in user.");
+    async linkAvatar(authentikUserPk, avatarUrl) {
+      if (!Number.isSafeInteger(authentikUserPk) || authentikUserPk <= 0) {
+        throw new AuthentikAvatarServiceError("The verified Authentik user ID is invalid.");
+      }
+      const token = await loadToken();
+      const userUrl = apiUrl(issuer, `core/users/${authentikUserPk}/`);
+      userUrl.searchParams.set("include_groups", "false");
+      userUrl.searchParams.set("include_roles", "false");
+      const userResponse = await apiRequest(userUrl, token);
+      const user: unknown = await userResponse.json();
+      if (
+        !user ||
+        typeof user !== "object" ||
+        !("pk" in user) ||
+        user.pk !== authentikUserPk ||
+        !("attributes" in user) ||
+        !isAttributes(user.attributes)
+      ) {
+        throw new AuthentikAvatarServiceError("Authentik returned an invalid user record.");
       }
 
-      await apiRequest(apiUrl(issuer, `core/users/${pk}/`), current.accessToken, {
+      await apiRequest(apiUrl(issuer, `core/users/${authentikUserPk}/`), token, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ attributes: { avatar: avatarUrl } }),
-      });
-      return current;
-    },
-    async revoke(credentials) {
-      await oidc.tokenRevocation(await getConfiguration(), credentials.refreshToken, {
-        token_type_hint: "refresh_token",
+        body: JSON.stringify({
+          attributes: {
+            ...user.attributes,
+            avatar: avatarUrl,
+          },
+        }),
       });
     },
   };
 }
-
-export const AUTHENTIK_DELEGATED_SCOPES = REQUIRED_SCOPES;

@@ -6,6 +6,7 @@ export interface DevelopmentIdentity {
   emailVerified: boolean;
   authenticationMethods: string[];
   pictureUrl: string | null;
+  authentikUserPk: null;
 }
 
 const COOKIE_SECRET_PLACEHOLDER = "replace-me";
@@ -48,6 +49,7 @@ export function loadDevelopmentIdentity(
     emailVerified: true,
     authenticationMethods: [],
     pictureUrl,
+    authentikUserPk: null,
   };
 }
 

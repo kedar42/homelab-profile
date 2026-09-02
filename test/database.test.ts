@@ -53,7 +53,7 @@ describe("SQLite profile repository", () => {
         emailVerified: true,
         authenticationMethods: ["pwd", "mfa"],
         pictureUrl: null,
-        delegatedCredentials: "encrypted-oauth-credentials",
+        authentikUserPk: 42,
         expiresAt: new Date(now.getTime() + 60_000),
       });
       expect(await repository.findSession("session-hash", now)).toMatchObject({
@@ -61,7 +61,7 @@ describe("SQLite profile repository", () => {
         username: "developer",
         emailVerified: true,
         authenticationMethods: ["pwd", "mfa"],
-        delegatedCredentials: "encrypted-oauth-credentials",
+        authentikUserPk: 42,
       });
 
       await repository.createOidcTransaction({
@@ -82,6 +82,7 @@ describe("SQLite profile repository", () => {
         filename: "first.webp",
         version: "8e36fdcf-c920-4e15-bf42-5ca12f48a9f0",
         updatedAt: now,
+        authentikLinkedAt: null,
       });
       await repository.upsertAvatar({
         ...firstAvatar,
@@ -94,10 +95,10 @@ describe("SQLite profile repository", () => {
         await repository.findAvatarByPublicId("3f6bf3d8-069f-4e2d-9e52-ccf50b065f82"),
       ).toMatchObject({ subject: "subject-1", filename: "second.webp" });
 
-      await repository.updateSessionCredentials("session-hash", "rotated-oauth-credentials");
-      expect((await repository.findSession("session-hash", now))?.delegatedCredentials).toBe(
-        "rotated-oauth-credentials",
-      );
+      await repository.markAvatarLinked("subject-1", now);
+      expect((await repository.findAvatarBySubject("subject-1"))?.authentikLinkedAt).toEqual(now);
+      await repository.deleteAvatar("subject-1");
+      expect(await repository.findAvatarBySubject("subject-1")).toBeNull();
 
       await repository.deleteSession("session-hash");
       expect(await repository.findSession("session-hash", now)).toBeNull();

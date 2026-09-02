@@ -7,31 +7,23 @@ import { Elysia, file, t } from "elysia";
 import { rateLimit } from "elysia-rate-limit";
 import * as oidc from "openid-client";
 import {
-  AUTHENTIK_DELEGATED_SCOPES,
-  type AuthentikUserApi,
-  AuthentikUserApiError,
-  createAuthentikUserApi,
-  delegatedCredentialsFromTokens,
+  AUTHENTIK_OIDC_SCOPES,
+  type AuthentikAvatarService,
+  AuthentikAvatarServiceError,
+  authentikUserPkClaim,
+  createAuthentikAvatarService,
 } from "./authentik";
 import { ACCEPTED_IMAGE_TYPES, AvatarUploadError, processAvatarUpload } from "./avatar";
 import type { AppConfig } from "./config";
 import type { ProfileRepository } from "./db/repository";
 import type { DevelopmentIdentity } from "./development-auth";
-import {
-  csrfToken,
-  type DelegatedCredentials,
-  hashToken,
-  openDelegatedCredentials,
-  randomToken,
-  sealDelegatedCredentials,
-  validCsrfToken,
-} from "./security";
+import { csrfToken, hashToken, randomToken, validCsrfToken } from "./security";
 
 export interface AppDependencies {
   config: AppConfig;
   repository: ProfileRepository;
   developmentIdentity?: DevelopmentIdentity | null;
-  authentikUserApi?: AuthentikUserApi;
+  authentikAvatarService?: AuthentikAvatarService;
 }
 
 function cookieSettings(config: AppConfig) {
@@ -85,7 +77,7 @@ export function createApp({
   config,
   repository,
   developmentIdentity,
-  authentikUserApi,
+  authentikAvatarService,
 }: AppDependencies) {
   const authenticationMode: "development" | "oidc" = developmentIdentity ? "development" : "oidc";
   let oidcConfiguration: Promise<oidc.Configuration> | undefined;
@@ -97,9 +89,12 @@ export function createApp({
     );
     return oidcConfiguration;
   };
-  const userApi =
-    authentikUserApi ??
-    createAuthentikUserApi({ issuer: config.oidcIssuer, getConfiguration: getOidcConfiguration });
+  const avatarService =
+    authentikAvatarService ??
+    createAuthentikAvatarService({
+      issuer: config.oidcIssuer,
+      tokenFile: config.authentikServiceTokenFile ?? undefined,
+    });
 
   return new Elysia({ name: "profile" })
     .use(
@@ -189,7 +184,6 @@ export function createApp({
             await repository.createSession({
               idHash: await hashToken(sessionId),
               ...developmentIdentity,
-              delegatedCredentials: null,
               expiresAt: new Date(Date.now() + config.sessionTtlDays * 24 * 60 * 60_000),
             });
             profile_session.value = sessionId;
@@ -229,7 +223,7 @@ export function createApp({
 
           const authorizationUrl = oidc.buildAuthorizationUrl(configuration, {
             redirect_uri: new URL("/auth/callback", config.appUrl).href,
-            scope: AUTHENTIK_DELEGATED_SCOPES,
+            scope: AUTHENTIK_OIDC_SCOPES,
             code_challenge: codeChallenge,
             code_challenge_method: "S256",
             state,
@@ -287,10 +281,7 @@ export function createApp({
             typeof claims.email_verified === "boolean" ? claims.email_verified : null;
           const authenticationMethods = stringArrayClaim(claims.amr);
           const pictureUrl = typeof claims.picture === "string" ? claims.picture : null;
-          const delegatedCredentials = await sealDelegatedCredentials(
-            config.cookieSecret,
-            delegatedCredentialsFromTokens(tokens),
-          );
+          const authentikUserPk = authentikUserPkClaim(claims.authentik_user_pk);
           const sessionId = randomToken();
           const expiresAt = new Date(Date.now() + config.sessionTtlDays * 24 * 60 * 60_000);
 
@@ -303,7 +294,7 @@ export function createApp({
             emailVerified,
             authenticationMethods,
             pictureUrl,
-            delegatedCredentials,
+            authentikUserPk,
             expiresAt,
           });
           profile_session.value = sessionId;
@@ -388,47 +379,54 @@ export function createApp({
                   filename,
                   version,
                   updatedAt: new Date(),
+                  authentikLinkedAt: previous?.authentikLinkedAt ?? null,
                 });
               } catch (error) {
                 await unlink(join(config.avatarDir, filename)).catch(() => undefined);
                 throw error;
               }
-              if (previous?.filename && previous.filename !== filename) {
-                await unlink(join(config.avatarDir, previous.filename)).catch(() => undefined);
-              }
               const avatarUrl = publicAvatarUrl(config, publicId);
-              if (!developmentIdentity) {
-                if (!session.record.delegatedCredentials) {
-                  throw new AuthentikUserApiError(
-                    "The delegated Authentik authorization is unavailable.",
-                  );
-                }
-                let updatedCredentials: DelegatedCredentials;
+              if (!developmentIdentity && !previous?.authentikLinkedAt) {
                 try {
-                  const credentials = await openDelegatedCredentials(
-                    config.cookieSecret,
-                    session.record.delegatedCredentials,
-                  );
-                  updatedCredentials = await userApi.setOwnAvatar(credentials, avatarUrl);
+                  if (!session.record.authentikUserPk) {
+                    throw new AuthentikAvatarServiceError(
+                      "The verified Authentik user ID is unavailable.",
+                    );
+                  }
+                  await avatarService.linkAvatar(session.record.authentikUserPk, avatarUrl);
                 } catch (error) {
-                  if (error instanceof AuthentikUserApiError) throw error;
-                  throw new AuthentikUserApiError(
-                    "The delegated Authentik authorization could not be used.",
+                  try {
+                    if (previous) await repository.upsertAvatar(previous);
+                    else await repository.deleteAvatar(session.record.subject);
+                  } catch (rollbackError) {
+                    console.error(
+                      "Unable to roll back failed Authentik avatar link",
+                      rollbackError,
+                    );
+                    throw rollbackError;
+                  }
+                  await unlink(join(config.avatarDir, filename)).catch(() => undefined);
+                  if (error instanceof AuthentikAvatarServiceError) throw error;
+                  throw new AuthentikAvatarServiceError(
+                    "The Authentik service credential could not link the avatar.",
                     { cause: error },
                   );
                 }
-                await repository.updateSessionCredentials(
-                  session.record.idHash,
-                  await sealDelegatedCredentials(config.cookieSecret, updatedCredentials),
-                );
+                await repository
+                  .markAvatarLinked(session.record.subject, new Date())
+                  .catch((error) =>
+                    console.error("Unable to record successful Authentik avatar link", error),
+                  );
+              }
+              if (previous?.filename && previous.filename !== filename) {
+                await unlink(join(config.avatarDir, previous.filename)).catch(() => undefined);
               }
               return { avatarUrl };
             } catch (error) {
               if (error instanceof AvatarUploadError) return status(422, { error: error.message });
-              if (error instanceof AuthentikUserApiError) {
+              if (error instanceof AuthentikAvatarServiceError) {
                 return status(502, {
-                  error:
-                    "The image was saved, but Authentik could not update your profile. Try again.",
+                  error: "Authentik could not link your profile picture. No change was saved.",
                 });
               }
               console.error("Avatar upload failed", error);
@@ -462,19 +460,6 @@ export function createApp({
             const sessionId = profile_session.value;
             if (sessionId) {
               const idHash = await hashToken(sessionId);
-              const session = await repository.findSession(idHash);
-              if (session?.delegatedCredentials && !developmentIdentity) {
-                try {
-                  await userApi.revoke(
-                    await openDelegatedCredentials(
-                      config.cookieSecret,
-                      session.delegatedCredentials,
-                    ),
-                  );
-                } catch (error) {
-                  console.error("Unable to revoke delegated Authentik access", error);
-                }
-              }
               await repository.deleteSession(idHash);
             }
             profile_session.remove();

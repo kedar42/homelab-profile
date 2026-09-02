@@ -6,6 +6,7 @@ export const avatars = sqliteTable("avatars", {
   filename: text("filename").notNull(),
   version: text("version").notNull(),
   updatedAt: text("updated_at").notNull(),
+  authentikLinkedAt: text("authentik_linked_at"),
 });
 
 export const sessions = sqliteTable(
@@ -19,7 +20,7 @@ export const sessions = sqliteTable(
     emailVerified: integer("email_verified", { mode: "boolean" }),
     authenticationMethods: text("authentication_methods").notNull().default("[]"),
     pictureUrl: text("picture_url"),
-    delegatedCredentials: text("delegated_credentials"),
+    authentikUserPk: integer("authentik_user_pk"),
     expiresAt: text("expires_at").notNull(),
   },
   (table) => [index("sessions_expires_at_idx").on(table.expiresAt)],

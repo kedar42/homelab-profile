@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { createApp } from "../src/app";
-import type { AuthentikUserApi } from "../src/authentik";
+import { type AuthentikAvatarService, AuthentikAvatarServiceError } from "../src/authentik";
 import type { AppConfig } from "../src/config";
 import type { ProfileRepository, SessionRecord } from "../src/db/repository";
-import { csrfToken, hashToken, sealDelegatedCredentials } from "../src/security";
+import { csrfToken, hashToken } from "../src/security";
 
 const config: AppConfig = {
   appUrl: new URL("https://profile.example.com"),
@@ -17,6 +17,7 @@ const config: AppConfig = {
   oidcIssuer: new URL("https://auth.example.com/application/o/profile/"),
   oidcClientId: "profile",
   oidcClientSecret: "client-secret",
+  authentikServiceTokenFile: "/run/secrets/authentik_profile_token",
   cookieSecret: "a-secure-cookie-secret-with-more-than-32-characters",
   sessionTtlDays: 7,
   secureCookies: true,
@@ -30,7 +31,6 @@ function repository(overrides: Partial<ProfileRepository> = {}): ProfileReposito
       return null;
     },
     async deleteSession() {},
-    async updateSessionCredentials() {},
     async createOidcTransaction() {},
     async consumeOidcTransaction() {
       return null;
@@ -44,18 +44,17 @@ function repository(overrides: Partial<ProfileRepository> = {}): ProfileReposito
     async upsertAvatar(record) {
       return record;
     },
+    async markAvatarLinked() {},
+    async deleteAvatar() {},
     async deleteExpired() {},
     async close() {},
     ...overrides,
   };
 }
 
-function userApi(overrides: Partial<AuthentikUserApi> = {}): AuthentikUserApi {
+function avatarService(overrides: Partial<AuthentikAvatarService> = {}): AuthentikAvatarService {
   return {
-    async setOwnAvatar(credentials) {
-      return credentials;
-    },
-    async revoke() {},
+    async linkAvatar() {},
     ...overrides,
   };
 }
@@ -118,6 +117,7 @@ describe("profile API", () => {
         emailVerified: true,
         authenticationMethods: [],
         pictureUrl: null,
+        authentikUserPk: null,
       },
       repository: repository({
         async createSession(record) {
@@ -136,7 +136,7 @@ describe("profile API", () => {
       displayName: "Local Developer",
       email: "developer@localhost",
       pictureUrl: null,
-      delegatedCredentials: null,
+      authentikUserPk: null,
     });
     expect(createdSession?.idHash).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -153,6 +153,7 @@ describe("profile API", () => {
         emailVerified: true,
         authenticationMethods: [],
         pictureUrl: null,
+        authentikUserPk: null,
       },
     }).handle(new Request("https://profile.example.com/api/auth/mode"));
 
@@ -186,7 +187,7 @@ describe("profile API", () => {
             emailVerified: true,
             authenticationMethods: ["pwd", "mfa"],
             pictureUrl: "https://auth.example.com/media/avatar.png",
-            delegatedCredentials: "sealed-credentials",
+            authentikUserPk: 42,
             expiresAt: new Date(Date.now() + 60_000),
           };
         },
@@ -232,7 +233,7 @@ describe("profile API", () => {
             emailVerified: null,
             authenticationMethods: [],
             pictureUrl: null,
-            delegatedCredentials: "sealed-credentials",
+            authentikUserPk: 42,
             expiresAt: new Date(Date.now() + 60_000),
           };
         },
@@ -243,6 +244,7 @@ describe("profile API", () => {
             filename: `subject-hash-${version}.webp`,
             version,
             updatedAt: new Date(),
+            authentikLinkedAt: new Date(),
           };
         },
       }),
@@ -258,7 +260,7 @@ describe("profile API", () => {
     );
   });
 
-  test("publishes a new opaque avatar URL through the user's delegated Authentik access", async () => {
+  test("links a new opaque avatar URL using the signed user claim and backend service", async () => {
     const avatarDir = await mkdtemp(join(tmpdir(), "profile-route-test-"));
     const sessionId = "local-session-token";
     const image = await sharp({
@@ -274,22 +276,17 @@ describe("profile API", () => {
     const body = new FormData();
     body.set("avatar", new File([image], "avatar.png", { type: "image/png" }));
     body.set("csrfToken", csrfToken(config.cookieSecret, sessionId));
-    const delegatedCredentials = await sealDelegatedCredentials(config.cookieSecret, {
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      accessTokenExpiresAt: Date.now() + 60_000,
-    });
     let publishedUrl: string | undefined;
     let storedAvatarPublicId: string | undefined;
+    let linkedSubject: string | undefined;
 
     try {
       const response = await createApp({
         config: { ...config, avatarDir },
-        authentikUserApi: userApi({
-          async setOwnAvatar(credentials, avatarUrl) {
-            expect(credentials.accessToken).toBe("access-token");
+        authentikAvatarService: avatarService({
+          async linkAvatar(userPk, avatarUrl) {
+            expect(userPk).toBe(42);
             publishedUrl = avatarUrl;
-            return credentials;
           },
         }),
         repository: repository({
@@ -303,13 +300,16 @@ describe("profile API", () => {
               emailVerified: null,
               authenticationMethods: [],
               pictureUrl: null,
-              delegatedCredentials,
+              authentikUserPk: 42,
               expiresAt: new Date(Date.now() + 60_000),
             };
           },
           async upsertAvatar(record) {
             storedAvatarPublicId = record.publicId;
             return record;
+          },
+          async markAvatarLinked(subject) {
+            linkedSubject = subject;
           },
         }),
       }).handle(
@@ -325,44 +325,152 @@ describe("profile API", () => {
       expect(result.avatarUrl).toBe(`https://profile.example.com/avatars/${storedAvatarPublicId}`);
       expect(publishedUrl).toBe(result.avatarUrl);
       expect(storedAvatarPublicId).toMatch(/^[a-f0-9-]{36}$/);
+      expect(linkedSubject).toBe("user-123");
     } finally {
       await rm(avatarDir, { recursive: true, force: true });
     }
   });
 
-  test("revokes the delegated Authentik grant when the user signs out", async () => {
+  test("reuses an already-linked URL without another Authentik mutation", async () => {
+    const avatarDir = await mkdtemp(join(tmpdir(), "profile-route-replace-test-"));
+    const sessionId = "local-session-token";
+    const publicId = "26c61c4e-ca21-4d74-969d-4dac5a4067c6";
+    const image = await sharp({
+      create: {
+        width: 20,
+        height: 20,
+        channels: 3,
+        background: { r: 30, g: 40, b: 50 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const body = new FormData();
+    body.set("avatar", new File([image], "avatar.png", { type: "image/png" }));
+    body.set("csrfToken", csrfToken(config.cookieSecret, sessionId));
+
+    try {
+      const response = await createApp({
+        config: { ...config, avatarDir },
+        authentikAvatarService: avatarService({
+          async linkAvatar() {
+            throw new Error("already-linked replacements must not call Authentik");
+          },
+        }),
+        repository: repository({
+          async findSession(idHash) {
+            return {
+              idHash,
+              subject: "user-123",
+              username: "kedar",
+              displayName: "Kedar",
+              email: "kedar@example.com",
+              emailVerified: null,
+              authenticationMethods: [],
+              pictureUrl: null,
+              authentikUserPk: 42,
+              expiresAt: new Date(Date.now() + 60_000),
+            };
+          },
+          async findAvatarBySubject() {
+            return {
+              subject: "user-123",
+              publicId,
+              filename: `${"a".repeat(40)}-${crypto.randomUUID()}.webp`,
+              version: crypto.randomUUID(),
+              updatedAt: new Date(),
+              authentikLinkedAt: new Date(),
+            };
+          },
+        }),
+      }).handle(
+        new Request("https://profile.example.com/api/profile/avatar", {
+          method: "POST",
+          headers: { cookie: `profile_session=${sessionId}` },
+          body,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect((await response.json()).avatarUrl).toBe(
+        `https://profile.example.com/avatars/${publicId}`,
+      );
+    } finally {
+      await rm(avatarDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rolls back a first upload when Authentik cannot link it", async () => {
+    const avatarDir = await mkdtemp(join(tmpdir(), "profile-route-rollback-test-"));
+    const sessionId = "local-session-token";
+    const image = await sharp({
+      create: {
+        width: 20,
+        height: 20,
+        channels: 3,
+        background: { r: 30, g: 40, b: 50 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const body = new FormData();
+    body.set("avatar", new File([image], "avatar.png", { type: "image/png" }));
+    body.set("csrfToken", csrfToken(config.cookieSecret, sessionId));
+    let deletedSubject: string | undefined;
+
+    try {
+      const response = await createApp({
+        config: { ...config, avatarDir },
+        authentikAvatarService: avatarService({
+          async linkAvatar() {
+            throw new AuthentikAvatarServiceError("forbidden");
+          },
+        }),
+        repository: repository({
+          async findSession(idHash) {
+            return {
+              idHash,
+              subject: "user-123",
+              username: "kedar",
+              displayName: "Kedar",
+              email: "kedar@example.com",
+              emailVerified: null,
+              authenticationMethods: [],
+              pictureUrl: null,
+              authentikUserPk: 42,
+              expiresAt: new Date(Date.now() + 60_000),
+            };
+          },
+          async deleteAvatar(subject) {
+            deletedSubject = subject;
+          },
+        }),
+      }).handle(
+        new Request("https://profile.example.com/api/profile/avatar", {
+          method: "POST",
+          headers: { cookie: `profile_session=${sessionId}` },
+          body,
+        }),
+      );
+
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({
+        error: "Authentik could not link your profile picture. No change was saved.",
+      });
+      expect(deletedSubject).toBe("user-123");
+      expect(await readdir(avatarDir)).toEqual([]);
+    } finally {
+      await rm(avatarDir, { recursive: true, force: true });
+    }
+  });
+
+  test("deletes only the local session when the user signs out", async () => {
     const sessionId = "local-session-token";
     const idHash = await hashToken(sessionId);
-    const delegatedCredentials = await sealDelegatedCredentials(config.cookieSecret, {
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      accessTokenExpiresAt: Date.now() + 60_000,
-    });
-    let revokedRefreshToken: string | undefined;
     let deletedSession: string | undefined;
     const response = await createApp({
       config,
-      authentikUserApi: userApi({
-        async revoke(credentials) {
-          revokedRefreshToken = credentials.refreshToken;
-        },
-      }),
       repository: repository({
-        async findSession(candidate) {
-          expect(candidate).toBe(idHash);
-          return {
-            idHash,
-            subject: "user-123",
-            username: "kedar",
-            displayName: "Kedar",
-            email: "kedar@example.com",
-            emailVerified: null,
-            authenticationMethods: [],
-            pictureUrl: null,
-            delegatedCredentials,
-            expiresAt: new Date(Date.now() + 60_000),
-          };
-        },
         async deleteSession(candidate) {
           deletedSession = candidate;
         },
@@ -375,7 +483,6 @@ describe("profile API", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(revokedRefreshToken).toBe("refresh-token");
     expect(deletedSession).toBe(idHash);
     expect(response.headers.get("set-cookie")).toContain("profile_session=");
   });
@@ -417,6 +524,7 @@ describe("profile API", () => {
               filename,
               version,
               updatedAt: new Date(),
+              authentikLinkedAt: new Date(),
             };
           },
         }),

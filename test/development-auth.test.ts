@@ -16,6 +16,7 @@ describe("development authentication configuration", () => {
       emailVerified: true,
       authenticationMethods: [],
       pictureUrl: null,
+      authentikUserPk: null,
     });
   });
 

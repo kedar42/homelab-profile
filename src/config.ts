@@ -8,6 +8,7 @@ export interface AppConfig {
   oidcIssuer: URL;
   oidcClientId: string;
   oidcClientSecret: string;
+  authentikServiceTokenFile: string | null;
   cookieSecret: string;
   sessionTtlDays: number;
   secureCookies: boolean;
@@ -51,8 +52,17 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     oidcIssuer,
     oidcClientId: required(env, "OIDC_CLIENT_ID"),
     oidcClientSecret: required(env, "OIDC_CLIENT_SECRET"),
+    authentikServiceTokenFile: env.AUTHENTIK_SERVICE_TOKEN_FILE?.trim()
+      ? resolve(env.AUTHENTIK_SERVICE_TOKEN_FILE.trim())
+      : null,
     cookieSecret,
     sessionTtlDays: positiveInteger(env.SESSION_TTL_DAYS, 7, "SESSION_TTL_DAYS"),
     secureCookies: appUrl.protocol === "https:",
   };
+}
+
+export function assertAuthentikServiceCredential(config: AppConfig): void {
+  if (!config.authentikServiceTokenFile) {
+    throw new Error("Production requires AUTHENTIK_SERVICE_TOKEN_FILE");
+  }
 }

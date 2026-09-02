@@ -1,11 +1,12 @@
 import { addWebClient, createApp } from "./app";
-import { loadConfig } from "./config";
+import { assertAuthentikServiceCredential, loadConfig } from "./config";
 import { assertProductionDatabase, loadDatabaseConfig } from "./db/config";
 import { createProfileRepository } from "./db/repository";
 import { assertDevelopmentAuthDisabled } from "./development-auth";
 
 assertDevelopmentAuthDisabled();
 const config = loadConfig();
+assertAuthentikServiceCredential(config);
 const databaseConfig = loadDatabaseConfig();
 assertProductionDatabase(databaseConfig);
 const repository = createProfileRepository(databaseConfig);
